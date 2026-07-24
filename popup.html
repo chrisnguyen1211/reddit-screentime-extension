@@ -160,7 +160,11 @@
     <!-- SAFETY -->
     <section class="panel" id="panel-safe">
       <div class="fields">
-        <label class="check-row danger-row">
+        <div id="riskGateBanner" class="risk-banner" hidden>
+          <strong>Full mode cần xác nhận rủi ro trước</strong>
+          <p>Tick ô bên dưới rồi bấm <b>Lưu</b> (hoặc bật ON lại). Không tick → extension sẽ báo phase ERROR.</p>
+        </div>
+        <label class="check-row danger-row" id="ackRiskRow">
           <input type="checkbox" id="rgl_ackRisk" />
           <span>Tôi hiểu Full mode có thể ban account (test account only)</span>
         </label>

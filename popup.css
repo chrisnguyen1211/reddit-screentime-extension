@@ -72,6 +72,48 @@ button.danger {
   font-weight: 600;
 }
 
+.risk-banner {
+  background: #fff1f0;
+  border: 1px solid #ff4d4f;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #5c0011;
+  line-height: 1.4;
+}
+.risk-banner strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #a8071a;
+}
+.risk-banner p {
+  margin: 0;
+  color: #820014;
+  font-size: 11px;
+}
+
+#ackRiskRow.pulse-risk {
+  outline: 2px solid #ff4d4f;
+  outline-offset: 2px;
+  border-radius: 10px;
+  background: #fff1f0;
+  padding: 8px;
+  animation: riskPulse 1s ease-in-out 3;
+}
+@keyframes riskPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 77, 79, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 77, 79, 0);
+  }
+}
+.tab.tab-alert {
+  box-shadow: 0 0 0 2px #ff4d4f;
+}
+
 header {
   display: flex;
   gap: 10px;

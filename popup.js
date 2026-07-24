@@ -130,11 +130,73 @@ function fillForm(s) {
   setStatus(s.rgl_enabled);
 }
 
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((x) => {
+    x.classList.toggle("on", x.dataset.tab === name);
+    x.classList.toggle("tab-alert", name === "safe" && x.dataset.tab === "safe");
+  });
+  document.querySelectorAll(".panel").forEach((x) => x.classList.remove("on"));
+  const panel = $(`panel-${name}`);
+  if (panel) panel.classList.add("on");
+}
+
+/** Full mode without risk ack → force Safety tab + highlight checkbox */
+function gateFullRisk({ from } = {}) {
+  const mode = $("rgl_mode").value;
+  const ack = $("rgl_ackRisk").checked;
+  if (mode !== "full" || ack) {
+    clearRiskGateUI();
+    return false;
+  }
+  switchTab("safe");
+  const banner = $("riskGateBanner");
+  if (banner) banner.hidden = false;
+  const row = $("ackRiskRow");
+  if (row) {
+    row.classList.remove("pulse-risk");
+    // reflow to restart animation
+    void row.offsetWidth;
+    row.classList.add("pulse-risk");
+  }
+  $("pageHint").textContent =
+    from === "enable"
+      ? "Full: tick Risk trước khi bật ON"
+      : "Full: tick Risk ở tab Safety trước";
+  try {
+    $("rgl_ackRisk").focus();
+  } catch (_) {}
+  return true;
+}
+
+function clearRiskGateUI() {
+  const banner = $("riskGateBanner");
+  if (banner) banner.hidden = true;
+  $("ackRiskRow")?.classList.remove("pulse-risk");
+  document.querySelectorAll(".tab").forEach((x) => x.classList.remove("tab-alert"));
+}
+
 function save(partial = {}) {
   const data = { ...readForm(), ...partial };
+
+  // Selecting Full / enabling without ack → jump Safety first; don't leave in ERROR silently
   if (data.rgl_mode === "full" && !data.rgl_ackRisk) {
-    $("pageHint").textContent = "Full cần tick ack risk (Safety)";
+    const gated = gateFullRisk({
+      from: partial.rgl_enabled || data.rgl_enabled ? "enable" : "mode",
+    });
+    // If user tried to enable ON without ack, force OFF until they acknowledge
+    if (data.rgl_enabled) {
+      data.rgl_enabled = false;
+      $("rgl_enabled").checked = false;
+    }
+    // Still save mode=full so after tick it remembers Full
+    chrome.storage.local.set(data, () => {
+      setStatus(false);
+      $("pageHint").textContent = "Đã chuyển Safety — tick risk rồi Lưu / bật ON";
+    });
+    return;
   }
+
+  clearRiskGateUI();
   chrome.storage.local.set(data, () => {
     setStatus(data.rgl_enabled);
     const btn = $("save");
@@ -180,16 +242,51 @@ function pollStats() {
 
 // tabs
 document.querySelectorAll(".tab").forEach((t) => {
-  t.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("on"));
-    document.querySelectorAll(".panel").forEach((x) => x.classList.remove("on"));
-    t.classList.add("on");
-    $(`panel-${t.dataset.tab}`).classList.add("on");
-  });
+  t.addEventListener("click", () => switchTab(t.dataset.tab));
 });
 
-$("rgl_enabled").addEventListener("change", () => save({ rgl_enabled: $("rgl_enabled").checked }));
-$("rgl_mode").addEventListener("change", () => save({ rgl_mode: $("rgl_mode").value }));
+$("rgl_enabled").addEventListener("change", () => {
+  // Bật ON + Full + chưa ack → nhảy Safety, không bật
+  if ($("rgl_enabled").checked && $("rgl_mode").value === "full" && !$("rgl_ackRisk").checked) {
+    $("rgl_enabled").checked = false;
+    gateFullRisk({ from: "enable" });
+    save({ rgl_enabled: false, rgl_mode: "full" });
+    return;
+  }
+  save({ rgl_enabled: $("rgl_enabled").checked });
+});
+
+$("rgl_mode").addEventListener("change", () => {
+  if ($("rgl_mode").value === "full" && !$("rgl_ackRisk").checked) {
+    // Chọn Full → nhảy Safety ngay; giữ mode=full trong storage nhưng force OFF
+    gateFullRisk({ from: "mode" });
+    $("rgl_enabled").checked = false;
+    save({ rgl_mode: "full", rgl_enabled: false });
+    return;
+  }
+  clearRiskGateUI();
+  save({ rgl_mode: $("rgl_mode").value });
+});
+
+$("rgl_ackRisk").addEventListener("change", () => {
+  if ($("rgl_ackRisk").checked) {
+    clearRiskGateUI();
+    // Sau khi tick: lưu ack; nếu mode đang Full → đưa về tab Run để bật ON
+    save({ rgl_ackRisk: true });
+    if ($("rgl_mode").value === "full") {
+      switchTab("run");
+      $("pageHint").textContent = "Risk OK — bật ON để chạy Full";
+    }
+  } else {
+    save({ rgl_ackRisk: false });
+    // Bỏ tick khi đang Full → tắt ON + nhắc lại
+    if ($("rgl_mode").value === "full") {
+      $("rgl_enabled").checked = false;
+      save({ rgl_ackRisk: false, rgl_enabled: false });
+    }
+  }
+});
+
 $("btnStop").addEventListener("click", () => {
   $("rgl_enabled").checked = false;
   save({ rgl_enabled: false });
@@ -197,7 +294,13 @@ $("btnStop").addEventListener("click", () => {
     if (tabs[0]?.id) chrome.tabs.sendMessage(tabs[0].id, { type: "RGL_STOP" });
   });
 });
-$("save").addEventListener("click", () => save());
+$("save").addEventListener("click", () => {
+  if ($("rgl_mode").value === "full" && !$("rgl_ackRisk").checked) {
+    gateFullRisk({ from: "mode" });
+    return;
+  }
+  save();
+});
 
 $("btnHealth")?.addEventListener("click", async () => {
   // persist endpoint first so SW uses current form values
