@@ -3,92 +3,167 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Reddit Screentime</title>
+    <title>Reddit Growth Lab</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <header>
       <div class="logo">🟠</div>
       <div>
-        <h1>Reddit Screentime</h1>
-        <p class="sub">Nhịp người · đọc theo số chữ · comments</p>
+        <h1>Reddit Growth Lab</h1>
+        <p class="sub">Screentime · Upvote · Comment/Reply</p>
       </div>
     </header>
 
-    <section class="toggle-row">
-      <label class="switch">
-        <input type="checkbox" id="enabled" />
-        <span class="slider"></span>
+    <nav class="tabs">
+      <button type="button" class="tab on" data-tab="run">Run</button>
+      <button type="button" class="tab" data-tab="auto">Scroll</button>
+      <button type="button" class="tab" data-tab="cmt">Comment</button>
+      <button type="button" class="tab" data-tab="safe">Safety</button>
+    </nav>
+
+    <!-- RUN -->
+    <section class="panel on" id="panel-run">
+      <div class="toggle-row">
+        <label class="switch">
+          <input type="checkbox" id="rgl_enabled" />
+          <span class="slider"></span>
+        </label>
+        <div>
+          <strong id="statusText">Đang tắt</strong>
+          <div class="hint" id="pageHint">Mở reddit.com</div>
+        </div>
+      </div>
+
+      <label class="block">
+        <span>Mode</span>
+        <select id="rgl_mode">
+          <option value="observe">Observe — chỉ scroll</option>
+          <option value="engage">Engage — scroll + upvote</option>
+          <option value="full">Full — + auto comment/reply (rủi ro cao)</option>
+        </select>
       </label>
-      <div>
-        <strong id="statusText">Đang tắt</strong>
-        <div class="hint" id="pageHint">Mở tab reddit.com rồi bật</div>
+
+      <div class="stats">
+        <div><span>Scrolls</span><b id="statScrolls">—</b></div>
+        <div><span>⬆</span><b id="statUpvotes">—</b></div>
+        <div><span>💬</span><b id="statComments">—</b></div>
+        <div><span>Phase</span><b id="statPhase">—</b></div>
+      </div>
+
+      <div class="live-cfg" id="liveCfg">Live: —</div>
+      <button type="button" id="btnStop" class="danger">STOP</button>
+    </section>
+
+    <!-- AUTOMATION -->
+    <section class="panel" id="panel-auto">
+      <div class="fields">
+        <label>
+          <span>Scroll speed <em id="scrollSpeedVal">1.2×</em></span>
+          <input type="range" id="rgl_scrollSpeed" min="0.4" max="3" step="0.1" value="1.2" />
+        </label>
+        <label>
+          <span>% upvote post <em id="upvoteChanceVal">8%</em></span>
+          <input type="range" id="rgl_upvoteChance" min="0" max="40" step="1" value="8" />
+        </label>
+        <label>
+          <span>% mở post <em id="openPostChanceVal">12%</em></span>
+          <input type="range" id="rgl_openPostChance" min="0" max="40" step="1" value="12" />
+        </label>
+        <label>
+          <span>% upvote comment <em id="commentUpvoteChanceVal">18%</em></span>
+          <input type="range" id="rgl_commentUpvoteChance" min="0" max="50" step="1" value="18" />
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_dynamicConfig" checked />
+          <span>Config drift theo thời gian</span>
+        </label>
+        <label>
+          <span>Drift ±% <em id="driftPercentVal">35%</em></span>
+          <input type="range" id="rgl_driftPercent" min="5" max="70" step="5" value="35" />
+        </label>
+        <div class="grid2">
+          <label><span>Pause min</span><input type="number" id="rgl_pauseMin" value="1.2" step="0.1" /></label>
+          <label><span>Pause max</span><input type="number" id="rgl_pauseMax" value="9" step="0.5" /></label>
+        </div>
       </div>
     </section>
 
-    <section class="stats" id="stats">
-      <div><span>Scrolls</span><b id="statScrolls">—</b></div>
-      <div><span>⬆ post</span><b id="statUpvotes">—</b></div>
-      <div><span>⬆ cmt</span><b id="statCmtUpvotes">—</b></div>
-      <div><span>Mở post</span><b id="statOpens">—</b></div>
-    </section>
-
-    <section class="fields">
-      <label>
-        <span>Tốc độ scroll base <em id="scrollSpeedVal">1.2×</em></span>
-        <input type="range" id="scrollSpeed" min="0.4" max="3" step="0.1" value="1.2" />
-      </label>
-
-      <label>
-        <span>% upvote post <em id="upvoteChanceVal">8%</em></span>
-        <input type="range" id="upvoteChance" min="0" max="40" step="1" value="8" />
-      </label>
-
-      <label>
-        <span>% mở post đọc comment <em id="openPostChanceVal">12%</em></span>
-        <input type="range" id="openPostChance" min="0" max="40" step="1" value="12" />
-      </label>
-
-      <label>
-        <span>% upvote comment (khi đang đọc) <em id="commentUpvoteChanceVal">18%</em></span>
-        <input type="range" id="commentUpvoteChance" min="0" max="50" step="1" value="18" />
-      </label>
-
-      <label>
-        <span>Tốc độ đọc (WPM) <em id="wpmVal">220</em></span>
-        <input type="range" id="wpm" min="120" max="400" step="10" value="220" />
-      </label>
-      <p class="field-note">Chữ càng nhiều → dừng càng lâu (có skim + jitter, không tuyến tính cứng).</p>
-
-      <div class="grid2">
+    <!-- COMMENT -->
+    <section class="panel" id="panel-cmt">
+      <div class="fields">
         <label>
-          <span>Pause min (s)</span>
-          <input type="number" id="pauseMin" min="0.3" max="30" step="0.1" value="1.2" />
+          <span>LLM endpoint</span>
+          <input type="text" id="rgl_endpoint" value="http://localhost:20128/v1" />
         </label>
         <label>
-          <span>Pause max base (s)</span>
-          <input type="number" id="pauseMax" min="1" max="60" step="0.5" value="9" />
+          <span>API key</span>
+          <input type="password" id="rgl_apiKey" placeholder="9router / OpenAI key" />
+        </label>
+        <label>
+          <span>Model</span>
+          <select id="rgl_model">
+            <option value="xai/grok-4">xai/grok-4</option>
+            <option value="xai/grok-4-fast-reasoning">xai/grok-4-fast</option>
+            <option value="cc/claude-sonnet-5">cc/claude-sonnet-5</option>
+            <option value="cc/claude-haiku-4.5">cc/claude-haiku-4.5</option>
+          </select>
+        </label>
+        <label>
+          <span>Product context (seeding)</span>
+          <textarea id="rgl_productContext" rows="2" placeholder="What you build…"></textarea>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_seedMode" />
+          <span>Seeding soft-mention</span>
+        </label>
+        <label>
+          <span>Comment chance base % <em id="commentChanceVal">12%</em></span>
+          <input type="range" id="rgl_commentChanceBase" min="0" max="40" step="1" value="12" />
+        </label>
+        <label>
+          <span>Typing WPM base <em id="commentWpmVal">38</em></span>
+          <input type="range" id="rgl_commentWpmBase" min="20" max="60" step="1" value="38" />
+        </label>
+        <p class="field-note">
+          Flow: vào post → score (câu hỏi + eng) → generate → think → gõ ∝ số từ →
+          <b>detect field → fill → click Comment/Reply</b>. Gap & chance drift như scroll.
+        </p>
+        <div class="grid2">
+          <label><span>Min gap (s)</span><input type="number" id="rgl_minSecondsBetweenComments" value="240" /></label>
+          <label><span>Max / hour</span><input type="number" id="rgl_maxCommentsPerHour" value="4" /></label>
+        </div>
+        <div class="grid2">
+          <label><span>Max / session</span><input type="number" id="rgl_maxCommentsPerSession" value="8" /></label>
+          <label><span>Min eng 0–1</span><input type="number" id="rgl_minEngagementScore" value="0.35" step="0.05" min="0" max="1" /></label>
+        </div>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_preferQuestions" checked />
+          <span>Ưu tiên post/comment có câu hỏi</span>
+        </label>
+        <label class="check-row danger-row">
+          <input type="checkbox" id="rgl_autoSubmit" checked />
+          <span>Auto-submit (fill + click) — ban risk</span>
         </label>
       </div>
+    </section>
 
-      <div class="grid2">
-        <label>
-          <span>Scroll min (px)</span>
-          <input type="number" id="scrollMin" min="10" max="400" step="5" value="28" />
+    <!-- SAFETY -->
+    <section class="panel" id="panel-safe">
+      <div class="fields">
+        <label class="check-row danger-row">
+          <input type="checkbox" id="rgl_ackRisk" />
+          <span>Tôi hiểu Full mode có thể ban account (test account only)</span>
         </label>
-        <label>
-          <span>Scroll max (px)</span>
-          <input type="number" id="scrollMax" min="20" max="600" step="5" value="160" />
-        </label>
+        <p class="note">
+          Tool lab riêng — không phải Bravestep production. Full auto vote/comment vi phạm ToS Reddit.
+          Cần 9router tại endpoint. Manual ✨ Comment/Reply vẫn dùng được trên trang.
+        </p>
       </div>
     </section>
 
     <footer>
       <button id="save" class="primary">Lưu & áp dụng</button>
-      <p class="note">
-        Scroll/pause dùng phân phối không đều + energy drift. Dừng theo số chữ post.
-        Có thể vi phạm Reddit ToS — dùng vừa phải.
-      </p>
     </footer>
 
     <script src="popup.js"></script>

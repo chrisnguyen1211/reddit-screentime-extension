@@ -698,6 +698,7 @@
   }
 
   async function maybeUpvoteInFeed() {
+    if (STATE.allowUpvote === false) return;
     const now = Date.now();
     const cooldown = normal(14000, 5000, 7000, 32000);
     if (now - STATE.lastUpvoteAt < cooldown) return;
@@ -832,6 +833,7 @@
   }
 
   async function maybeUpvoteComment() {
+    if (STATE.allowUpvote === false) return;
     const now = Date.now();
     if (now - STATE.lastCommentUpvoteAt < normal(12000, 4000, 6000, 28000)) return;
     if (!chance(STATE.commentUpvoteChance)) return;
@@ -1110,100 +1112,143 @@
     log("Stopped", STATE.stats);
   }
 
-  function applySettings(settings) {
-    const was = STATE.enabled;
+  function mapRglSettings(s) {
+    return {
+      enabled: !!(s.rgl_enabled ?? s.enabled),
+      scrollSpeed: s.rgl_scrollSpeed ?? s.scrollSpeed ?? 1.2,
+      upvoteChance: s.rgl_upvoteChance ?? s.upvoteChance ?? 8,
+      openPostChance: s.rgl_openPostChance ?? s.openPostChance ?? 12,
+      commentUpvoteChance: s.rgl_commentUpvoteChance ?? s.commentUpvoteChance ?? 18,
+      pauseMin: s.rgl_pauseMin ?? s.pauseMin ?? 1.2,
+      pauseMax: s.rgl_pauseMax ?? s.pauseMax ?? 9,
+      scrollMin: s.rgl_scrollMin ?? s.scrollMin ?? 28,
+      scrollMax: s.rgl_scrollMax ?? s.scrollMax ?? 160,
+      wpm: s.rgl_wpm ?? s.wpm ?? 220,
+      dynamicConfig: s.rgl_dynamicConfig !== false && s.dynamicConfig !== false,
+      driftPercent: s.rgl_driftPercent ?? s.driftPercent ?? 35,
+      driftIntervalMin: s.rgl_driftIntervalMin ?? s.driftIntervalMin ?? 2,
+      driftIntervalMax: s.rgl_driftIntervalMax ?? s.driftIntervalMax ?? 9,
+      microDrift: s.rgl_microDrift !== false && s.microDrift !== false,
+      // comment rhythm live keys (orchestrator/auto-comment also reads)
+      commentChance: s.rgl_commentChanceBase ?? 12,
+      commentWpm: s.rgl_commentWpmBase ?? 38,
+      minGapSec: s.rgl_minSecondsBetweenComments ?? 240,
+    };
+  }
 
-    STATE.enabled = !!settings.enabled;
-    STATE.dynamicConfig = settings.dynamicConfig !== false; // default on
-    STATE.driftPercent = Number(settings.driftPercent) ?? 35;
-    STATE.driftIntervalMin = Number(settings.driftIntervalMin) || 2;
-    STATE.driftIntervalMax = Number(settings.driftIntervalMax) || 9;
-    STATE.microDrift = settings.microDrift !== false;
+  // Extra drift keys for comment rhythm (shared mood with scroll)
+  const EXTRA_DRIFT = ["commentChance", "commentWpm", "minGapSec"];
+  const EXTRA_BOUNDS = {
+    commentChance: [0, 40],
+    commentWpm: [18, 70],
+    minGapSec: [90, 1200],
+  };
+  for (const k of EXTRA_DRIFT) {
+    if (!DRIFT_KEYS.includes(k)) DRIFT_KEYS.push(k);
+    CONFIG_BOUNDS[k] = EXTRA_BOUNDS[k];
+    STATE[k] = k === "commentChance" ? 12 : k === "commentWpm" ? 38 : 240;
+  }
 
-    // user sliders = baseline
-    const base = snapshotBaseFromSettings(settings);
+  function applySettings(settings, { autoStart = false } = {}) {
+    const mapped = mapRglSettings(settings);
+    STATE.dynamicConfig = mapped.dynamicConfig;
+    STATE.driftPercent = Number(mapped.driftPercent) ?? 35;
+    STATE.driftIntervalMin = Number(mapped.driftIntervalMin) || 2;
+    STATE.driftIntervalMax = Number(mapped.driftIntervalMax) || 9;
+    STATE.microDrift = mapped.microDrift !== false;
+    STATE.allowUpvote = true; // orchestrator can set false
+
+    const base = snapshotBaseFromSettings(mapped);
+    // inject comment rhythm into base
+    base.commentChance = mapped.commentChance;
+    base.commentWpm = mapped.commentWpm;
+    base.minGapSec = mapped.minGapSec;
+    STATE.base = base;
 
     if (!STATE.dynamicConfig || !STATE.running) {
       applyLiveFromBase(base);
     } else {
-      // keep current live mood but re-anchor next re-roll to new base;
-      // soft pull live halfway toward new base so UI changes feel responsive
       for (const k of DRIFT_KEYS) {
+        if (base[k] == null) continue;
         STATE[k] = clampConfig(k, STATE[k] * 0.55 + base[k] * 0.45);
       }
       normalizeLivePairs();
     }
 
-    if (STATE.enabled && !was) start();
-    else if (!STATE.enabled && was) stop();
-    else if (STATE.enabled && !STATE.running) start();
-    else if (STATE.enabled && STATE.dynamicConfig && !STATE.nextDriftAt) {
-      scheduleNextDrift();
+    // sync to RGL bus
+    if (window.RGL?.bus) {
+      window.RGL.bus.live = liveConfigSnapshot();
+      window.RGL.bus.energy = STATE.rhythm.energy;
+      window.RGL.bus.stats = { ...window.RGL.bus.stats, ...STATE.stats };
+    }
+
+    if (autoStart) {
+      STATE.enabled = !!mapped.enabled;
+      if (STATE.enabled) start();
+      else stop();
     }
   }
 
-  const DEFAULTS = {
-    enabled: false,
-    scrollSpeed: 1.2,
-    upvoteChance: 8,
-    openPostChance: 12,
-    commentUpvoteChance: 18,
-    pauseMin: 1.2,
-    pauseMax: 9,
-    scrollMin: 28,
-    scrollMax: 160,
-    wpm: 220,
-    dynamicConfig: true,
-    driftPercent: 35,
-    driftIntervalMin: 2,
-    driftIntervalMax: 9,
-    microDrift: true,
-  };
+  function pause() {
+    STATE.paused = true;
+    STATE.abort = true; // break inner waits
+  }
+  function resume() {
+    STATE.paused = false;
+    STATE.abort = false;
+  }
 
-  chrome.storage.local.get(DEFAULTS, applySettings);
+  async function tickFeed({ allowUpvote = true } = {}) {
+    if (STATE.paused) return;
+    STATE.allowUpvote = allowUpvote;
+    STATE.enabled = true;
+    tickDynamicConfig();
+    await humanScrollGesture("feed");
+    await humanPauseAfterScroll();
+    if (allowUpvote) await maybeUpvoteInFeed();
+    await handleNearBottom();
+    if (window.RGL?.bus) {
+      window.RGL.bus.stats = { ...window.RGL.bus.stats, ...STATE.stats };
+      window.RGL.bus.live = liveConfigSnapshot();
+      window.RGL.bus.energy = STATE.rhythm.energy;
+    }
+  }
 
+  // Don't auto-start — orchestrator owns lifecycle
+  chrome.storage.local.get(null, (s) => applySettings(s, { autoStart: false }));
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
-    chrome.storage.local.get(DEFAULTS, applySettings);
+    chrome.storage.local.get(null, (s) => applySettings(s, { autoStart: false }));
   });
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.type === "GET_STATS") {
-      sendResponse({
-        stats: STATE.stats,
-        enabled: STATE.enabled,
-        running: STATE.running,
-        mode: STATE.mode,
-        energy: STATE.rhythm.energy,
-        dynamicConfig: STATE.dynamicConfig,
-        live: liveConfigSnapshot(),
-        base: STATE.base,
-        driftCount: STATE.driftCount,
-        nextDriftAt: STATE.nextDriftAt,
-        lastDriftAt: STATE.lastDriftAt,
-      });
-      return true;
-    }
-    if (msg?.type === "FORCE_DRIFT") {
-      if (STATE.dynamicConfig) rollLiveConfig("manual");
-      sendResponse({ ok: true, live: liveConfigSnapshot() });
-      return true;
-    }
-    if (msg?.type === "PING") {
-      sendResponse({ ok: true, href: location.href, mode: STATE.mode });
-      return true;
-    }
-  });
-
-  // expose for debug in console
-  window.__redditScreentime = {
-    countPostChars,
-    estimateReadingMs,
+  window.RGL = window.RGL || {};
+  window.RGL.automation = {
+    start,
+    stop,
+    pause,
+    resume,
+    applySettings,
+    tickFeed,
+    humanScrollGesture,
+    humanPauseAfterScroll,
+    maybeUpvoteInFeed,
+    maybeUpvoteComment,
+    maybeOpenPost,
+    readPostPageSession,
     pickFocusedPost,
+    findAllPosts,
+    findComments,
+    countPostChars,
+    countCommentChars,
+    estimateReadingMs,
     rollLiveConfig,
     liveConfigSnapshot,
-    STATE,
+    tickDynamicConfig,
+    isPaused: () => !!STATE.paused,
+    getState: () => STATE,
+    getStats: () => STATE.stats,
   };
 
-  log("Content script loaded", location.href, isPostPage() ? "(post)" : "(feed)");
+  window.__redditScreentime = window.RGL.automation;
+  log("Automation module ready", location.href);
 })();

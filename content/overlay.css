@@ -1,0 +1,400 @@
+/* Reddit Growth Lab — overlay (from Claude design) */
+@keyframes rglPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes rglBar {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 24px 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rgl-pulse {
+    animation: none !important;
+  }
+  .rgl-typebar-fill {
+    animation: none !important;
+  }
+}
+
+#rgl-overlay-root {
+  all: initial;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #e8e8ea;
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+  pointer-events: none;
+}
+
+#rgl-overlay-root * {
+  box-sizing: border-box;
+}
+
+/* Collapsed pill */
+.rgl-pill {
+  pointer-events: auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  padding: 0;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(18, 18, 20, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.rgl-pill.on {
+  display: flex;
+}
+.rgl-pill .rgl-pill-mode {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.rgl-pill .rgl-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: rglPulse 1.8s ease-in-out infinite;
+}
+
+/* Expanded panel */
+.rgl-panel {
+  display: none;
+  width: 272px;
+  pointer-events: none;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(18, 18, 20, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  overflow: hidden;
+}
+.rgl-panel.on {
+  display: block;
+}
+
+.rgl-header {
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.rgl-mode-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.rgl-phase {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #d6d6dc;
+}
+.rgl-energy-pct {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: #8a8a92;
+  margin-left: auto;
+}
+.rgl-chevron {
+  color: #5a5a62;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.rgl-energy-track {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.rgl-energy-fill {
+  height: 100%;
+  background: #ff4500;
+  transition: width 0.35s ease;
+}
+
+.rgl-body {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.rgl-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.rgl-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.rgl-metric b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f0f2;
+  line-height: 1;
+}
+.rgl-metric span {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7c7c85;
+}
+
+.rgl-job {
+  display: none;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 9px 10px;
+  flex-direction: column;
+  gap: 8px;
+}
+.rgl-job.on {
+  display: flex;
+}
+.rgl-job-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rgl-job-head .title {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8a92;
+}
+.rgl-job-head .step {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  color: #7c7c85;
+}
+
+.rgl-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.rgl-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.rgl-step-dot {
+  margin-top: 3px;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.rgl-step-dot.active {
+  background: #ff4500;
+  animation: rglPulse 1.8s ease-in-out infinite;
+}
+.rgl-step-dot.done {
+  background: #3f9d54;
+}
+.rgl-step-dot.fail {
+  background: #ff453a;
+}
+.rgl-step-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.rgl-step-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rgl-step-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #66666e;
+  letter-spacing: 0.02em;
+}
+.rgl-step-label.active {
+  font-weight: 700;
+  color: #fff;
+}
+.rgl-step-label.done {
+  color: #7c9a84;
+}
+.rgl-step-label.fail {
+  font-weight: 700;
+  color: #ff7a70;
+}
+.rgl-step-detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: #4a4a52;
+}
+.rgl-step-detail.active {
+  color: #ff9466;
+}
+.rgl-step-detail.fail {
+  color: #ff7a70;
+}
+
+.rgl-typebar {
+  display: none;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-top: 2px;
+}
+.rgl-typebar.on {
+  display: block;
+}
+.rgl-typebar-fill {
+  height: 100%;
+  width: 0%;
+  background: #ff4500;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.25) 0 4px,
+    transparent 4px 12px
+  );
+  animation: rglBar 0.9s linear infinite;
+  transition: width 0.3s linear;
+}
+
+.rgl-job-error {
+  display: none;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: rgba(255, 59, 48, 0.1);
+  border: 1px solid rgba(255, 59, 48, 0.25);
+}
+.rgl-job-error.on {
+  display: flex;
+}
+.rgl-job-error .x {
+  color: #ff453a;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.rgl-job-error .msg {
+  font-size: 10px;
+  color: #ffb3ae;
+  line-height: 1.35;
+}
+
+.rgl-rhythm {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.rgl-rhythm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rgl-rhythm-row .lbl {
+  font-size: 10px;
+  color: #8a8a92;
+  flex: 0 0 auto;
+}
+.rgl-rhythm-row .dots {
+  flex: 1;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.1);
+}
+.rgl-rhythm-row .val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: #c8c8ce;
+}
+.rgl-rhythm-row .val.warn {
+  color: #ff9466;
+}
+.rgl-rhythm-row .val.ok {
+  color: #7c9a84;
+}
+.rgl-rhythm-row .val.muted {
+  color: #a0a0a8;
+}
+
+.rgl-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.rgl-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rgl-router-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3f9d54;
+}
+.rgl-router-dot.down {
+  background: #ff453a;
+  animation: rglPulse 1.8s ease-in-out infinite;
+}
+.rgl-router-text,
+.rgl-model {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: #8a8a92;
+}
+.rgl-model {
+  margin-left: auto;
+  color: #7c7c85;
+}
+.rgl-status {
+  font-size: 10.5px;
+  color: #b8b8be;
+  line-height: 1.35;
+  font-style: italic;
+}
+
+#rgl-overlay-root.hidden {
+  display: none;
+}

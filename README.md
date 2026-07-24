@@ -1,48 +1,58 @@
-# Reddit Screentime Scroller v1.1
+# Reddit Growth Lab `2.0.0-test`
 
-Human-like auto scroll Reddit: **nhịp không đều**, **dừng theo số chữ post**, thỉnh thoảng **mở post → đọc comment → upvote comment**.
+Gộp **screentime scroll** + **upvote** + **LLM comment/reply (fill → click submit)** thành một Chrome extension.
 
-## Cài / cập nhật
+> Lab cá nhân / account test. **Không** merge vào Bravestep production (Bravestep cố ý no-auto-vote).
 
-1. `chrome://extensions` → bật Developer mode  
-2. **Load unpacked** (lần đầu) hoặc **Reload** icon trên card extension  
-3. Mở reddit.com → bật toggle ON  
+## Cài
 
-Folder: `/Users/nguyenhuycuong/reddit-screentime-extension`
+1. `chrome://extensions` → Developer mode → **Load unpacked**
+2. Chọn folder:
+   ```
+   /Users/nguyenhuycuong/reddit-screentime-extension
+   ```
+3. Mở [reddit.com](https://www.reddit.com), **F5** sau mỗi lần reload extension
+4. Popup → tab **Comment**: endpoint `http://localhost:20128/v1` + API key (9router)
+5. Tab **Safety**: tick ack risk nếu dùng Full
+6. Tab **Run**: chọn mode → bật ON
 
-## Anti-pattern (bot rhythm)
+## Modes
 
-| Cơ chế | Mô tả |
-|--------|--------|
-| `normal` / `logish` RNG | Pause & scroll **không uniform** |
-| Energy drift | Session “mệt / nhanh” thay đổi dần |
-| Burst + reverse scroll | Thỉnh thoảng scroll nhỏ liên tiếp hoặc scroll lên lại |
-| Long-tail pause | 4% nghỉ dài 8–25s; 8% “đọc kỹ” ×1.6–3.2 |
-| Avoid same pause | Nếu pause gần bằng lần trước → nhân jitter |
+| Mode | Scroll | Upvote | Auto comment/reply |
+|------|--------|--------|--------------------|
+| **Observe** | ✓ | — | — |
+| **Engage** | ✓ | ✓ | — |
+| **Full** | ✓ | ✓ | ✓ (cần ack risk) |
 
-## Đọc theo số chữ
+## Comment / Reply flow (Full)
 
-```js
-countPostChars(postEl)  // → { chars, words, title, body }
-estimateReadingMs(count) // WPM + skim factor + fatigue + jitter
+1. Mở **trang post** (`/comments/...`) — không comment từ feed list  
+2. Score target: **câu hỏi** + engagement + substance; skip bài thấp eng  
+3. LLM generate (9router)  
+4. **Think** + **typing latency** ∝ số từ / WPM (vd ~30s cho ~20 từ)  
+5. **Detect field** comment/reply → **fill** → **click** Comment/Reply  
+6. Gap + chance **drift** giống scroll (không interval cố định)  
+7. Max 1 comment / thread / session; hour/session caps  
+
+Manual ✨ **Comment/Reply** (Bram) vẫn inject — human-in-the-loop bất kỳ mode.
+
+## File layout
+
+```
+content/00-shared.js
+content/10-automation.js    # scroll / dwell / upvote / drift
+content/20-assist-ui.js     # Bram + fill/submit helpers (from Bravestep)
+content/30-auto-comment.js  # job queue + typing latency + submit
+content/40-orchestrator.js  # modes + main loop + overlay
+background.js + background-llm.js
+docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md
 ```
 
-- Post ngắn: hay đọc gần hết  
-- Post dài: **skim** (22–70% thời gian) — giống người  
-- Debug console: `window.__redditScreentime.countPostChars(...)`
+## Overlay design
 
-## Mở post + comment
+Prompt để Claude generate UI overlay:  
+[`docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md`](docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md)
 
-- `% mở post` (default 12%), cooldown ~25–120s  
-- Trong post: scroll OP theo char count → scroll comments → `% upvote comment`  
-- Xong: `history.back()` về feed  
+## Risk
 
-## Popup settings
-
-- Tốc độ scroll base, pause min/max, px scroll  
-- % upvote post / mở post / upvote comment  
-- **WPM** (120–400): baseline đọc; chữ nhiều → dừng lâu hơn  
-
-## Lưu ý
-
-Auto vote/bot behavior có thể vi phạm Reddit ToS. Dùng mức vừa.
+Auto vote + auto comment = **ToS / ban risk**. Dùng account phụ, cap thấp, Observe trước.

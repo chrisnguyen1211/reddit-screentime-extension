@@ -1,17 +1,20 @@
 {
   "manifest_version": 3,
-  "name": "Reddit Screentime Scroller",
-  "version": "1.1.0",
-  "description": "Human-like Reddit screentime: uneven scroll, read-time by char count, open posts & upvote comments.",
-  "permissions": ["storage", "activeTab"],
+  "name": "Reddit Growth Lab",
+  "version": "2.0.0-test",
+  "description": "Unified lab: human screentime scroll + upvote + LLM comment/reply (fill→submit) with typing latency. Test accounts only.",
+  "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [
-    "https://www.reddit.com/*",
-    "https://old.reddit.com/*",
-    "https://new.reddit.com/*"
+    "*://*.reddit.com/*",
+    "https://i.redd.it/*",
+    "https://preview.redd.it/*",
+    "https://external-preview.redd.it/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Reddit Screentime Scroller",
+    "default_title": "Reddit Growth Lab",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -23,18 +26,22 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://www.reddit.com/*",
-        "https://old.reddit.com/*",
-        "https://new.reddit.com/*"
-      ],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
   "background": {
     "service_worker": "background.js"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.reddit.com/*"],
+      "js": [
+        "content/00-shared.js",
+        "content/05-overlay.js",
+        "content/10-automation.js",
+        "content/20-assist-ui.js",
+        "content/30-auto-comment.js",
+        "content/40-orchestrator.js"
+      ],
+      "css": ["content.css", "content/overlay.css"],
+      "run_at": "document_idle"
+    }
+  ]
 }

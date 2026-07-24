@@ -1,0 +1,174 @@
+/* Trigger buttons are inline-styled because some are injected into Reddit shadow roots. */
+.rch-trigger:focus-visible {
+  outline: 2px solid rgba(255, 138, 85, .82) !important;
+  outline-offset: 3px !important;
+}
+.rch-trigger:disabled {
+  filter: saturate(.45);
+}
+.rch-trigger:disabled:active {
+  transform: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rch-trigger, .rch-trigger__edge { transition: none !important; }
+}
+
+/* ── Bram mascot, fixed in the corner ── */
+.rch-mascot {
+  position: fixed; right: 14px; bottom: 90px; z-index: 2147483646;
+  width: 92px; height: 116px; cursor: grab; touch-action: none;
+  filter: drop-shadow(0 7px 16px rgba(0,0,0,.45));
+  transition: filter .2s ease;
+}
+.rch-mascot.dragging { cursor: grabbing; transition: none; }
+.rch-mascot svg { width: 92px; height: auto; display: block; }
+.rch-mascot:hover { transform: translateY(-2px); filter: drop-shadow(0 8px 18px rgba(255,79,31,.5)); }
+.rch-mascot.scanning { filter: drop-shadow(0 6px 18px rgba(255,79,31,.55)); }
+
+/* ── speech bubble (pops from Bram's head) ── */
+.rch-bubble {
+  position: fixed; right: 14px; bottom: 222px; z-index: 2147483647;
+  width: 360px; max-width: calc(100vw - 28px);
+  background: #1b1b1f; color: #e8e6e3; border: 1px solid #3a2a20; border-radius: 16px;
+  box-shadow: 0 16px 44px rgba(0,0,0,.55); padding: 14px 14px 12px;
+  font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+  animation: rchPop .2s cubic-bezier(.34,1.4,.5,1);
+}
+@keyframes rchPop { from { transform: translateY(10px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
+/* tail pointing down-right toward the mascot */
+.rch-bubble::before { content: ""; position: absolute; right: 30px; bottom: -13px; border: 12px solid transparent; border-top-color: #3a2a20; }
+.rch-bubble::after  { content: ""; position: absolute; right: 31px; bottom: -11px; border: 11px solid transparent; border-top-color: #1b1b1f; }
+.rch-bubble .rch-x { position: absolute; top: 7px; right: 10px; background: transparent; color: #8a8a92; border: 0; font-size: 15px; cursor: pointer; }
+.rch-bubble .rch-x:hover { color: #ff9a5c; }
+.rch-target { font-size: 11.5px; color: #8a8a92; padding-right: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 8px; }
+.rch-target b { color: #ff9a5c; font-weight: 600; }
+.rch-quote { margin: 0 0 9px; padding: 7px 9px; border-left: 3px solid #ff7b45; background: #24242a; border-radius: 0 8px 8px 0; }
+.rch-quote-label { display: block; margin-bottom: 2px; color: #ffb18a; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.rch-quote blockquote { margin: 0; color: #c9c7c4; font-size: 12px; line-height: 1.4; max-height: 52px; overflow: hidden; }
+.rch-draft {
+  width: 100%; background: #0f0f12; color: #e8e6e3; border: 1px solid #2a2a30; border-radius: 12px;
+  padding: 11px 12px; resize: none; min-height: 62px; max-height: 260px; overflow: auto;
+  font: 13.5px/1.55 -apple-system, Segoe UI, Roboto, sans-serif; box-sizing: border-box;
+}
+.rch-draft:focus { outline: none; border-color: #ff4f1f; }
+.rch-instr { width: 100%; margin-top: 8px; background: #0f0f12; color: #e8e6e3; border: 1px solid #2a2a30;
+  border-radius: 9px; padding: 7px 10px; font: 12px -apple-system, Segoe UI, Roboto, sans-serif; box-sizing: border-box; }
+.rch-instr::placeholder { color: #6f6f78; }
+.rch-instr:focus { outline: none; border-color: #ff4f1f; }
+.rch-bar { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
+.rch-spacer { flex: 1; }
+.rch-mini { background: #202027; color: #cdd7e8; border: 1px solid #2a2a30; border-radius: 8px;
+  padding: 5px 9px; font-size: 11.5px; cursor: pointer; }
+.rch-mini:hover { border-color: #ff4f1f; }
+.rch-fill { background: #ff4500; color: #fff; border: 0; border-radius: 8px; padding: 5px 12px;
+  font-weight: 700; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.rch-fill:hover { filter: brightness(1.08); }
+.rch-fill:disabled,.rch-mini:disabled,.rch-ddbtn:disabled,.rch-seed:disabled { cursor: wait; opacity: .55; }
+.rch-seed { background: #202027; color: #8a8a92; border: 1px solid #2a2a30; border-radius: 8px;
+  padding: 5px 8px; font-size: 12px; cursor: pointer; }
+.rch-seed:hover { border-color: #1e5a34; }
+.rch-seed.on { background: #12331f; color: #7fe0a0; border-color: #1e5a34; }
+/* model dropdown */
+.rch-dd { position: relative; }
+.rch-ddbtn { display: inline-flex; align-items: center; gap: 5px; background: #202027; color: #e8e6e3;
+  border: 1px solid #2a2a30; border-radius: 999px; padding: 5px 11px;
+  font: 600 11.5px -apple-system, Segoe UI, Roboto, sans-serif; cursor: pointer; }
+.rch-ddbtn:hover { border-color: #ff4f1f; }
+.rch-ddcaret { color: #8a8a92; font-size: 11px; }
+.rch-ddmenu { position: absolute; left: 0; bottom: calc(100% + 6px); background: #1f1f24; border: 1px solid #33333c;
+  border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,.5); padding: 5px; min-width: 190px; z-index: 5; }
+.rch-dditem { display: block; width: 100%; text-align: left; background: transparent; color: #e8e6e3; border: 0;
+  border-radius: 8px; padding: 8px 10px; font: 13px -apple-system, Segoe UI, Roboto, sans-serif; cursor: pointer; }
+.rch-dditem:hover { background: #2a1a12; color: #ff9a5c; }
+
+/* ── Bram rig (ported 1:1 from butlerMascot.ts) ── */
+.bsm2 { overflow: visible; display: block; }
+.m-armL,.m-armR,.m-foreL,.m-foreR,.m-legL,.m-legR,.m-shinL,.m-shinR,.m-antenna,.m-doc,.m-lids,.m-tipglow,.m-pen,.m-thought,.m-body { transform-box: view-box; }
+.m-armL{transform-origin:33px 74px}.m-foreL{transform-origin:31px 88px}
+.m-armR{transform-origin:107px 74px}.m-foreR{transform-origin:109px 88px}
+.m-legL{transform-origin:59px 106px}.m-legR{transform-origin:81px 106px}
+.m-antenna{transform-origin:70px 52px}.m-doc{transform-origin:70px 104px}
+.m-body{transform-origin:70px 106px}
+.m-pen{transform-origin:81px 100px;opacity:0}
+.m-thought{transform-origin:96px 34px;opacity:0}
+.m-armL,.m-armR,.m-foreL,.m-foreR{transition:transform .5s cubic-bezier(.34,1.56,.5,1)}
+.m-legL,.m-legR,.m-shinL,.m-shinR{transition:transform .5s cubic-bezier(.34,1.4,.5,1)}
+.m-body{transition:transform .5s cubic-bezier(.34,1.4,.5,1)}
+.m-doc{opacity:0;transform:scale(0);transition:opacity .4s ease,transform .4s ease}
+.m-pen{transition:opacity .3s ease}
+.m-thought{transition:opacity .3s ease}
+.m-bob{animation:bsmBreath 2.8s ease-in-out infinite}
+@keyframes bsmBreath{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-3.4px) rotate(1deg)}}
+.m-legL{animation:bsmStepL 2.8s ease-in-out infinite}
+.m-legR{animation:bsmStepR 2.8s ease-in-out infinite}
+@keyframes bsmStepL{0%,100%{transform:rotate(0)}50%{transform:rotate(-5deg)}}
+@keyframes bsmStepR{0%,100%{transform:rotate(0)}50%{transform:rotate(5deg)}}
+.m-armL{animation:bsmArmIdleL 2.8s ease-in-out infinite}
+.m-armR{animation:bsmArmIdleR 2.8s ease-in-out infinite}
+@keyframes bsmArmIdleL{0%,100%{transform:rotate(4deg)}50%{transform:rotate(-3deg)}}
+@keyframes bsmArmIdleR{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(3deg)}}
+.m-antenna{animation:bsmSway 2.4s ease-in-out infinite}
+@keyframes bsmSway{0%,100%{transform:rotate(-9deg)}50%{transform:rotate(9deg)}}
+.m-lids{transform:translateY(-30px);animation:bsmBlink 3.6s ease-in-out infinite}
+@keyframes bsmBlink{0%,90%,100%{transform:translateY(-30px)}95%{transform:translateY(0)}}
+.m-tipglow{transform-origin:70px 31px;opacity:0;animation:bsmTip 2s ease-in-out infinite}
+@keyframes bsmTip{0%,100%{transform:scale(1);opacity:0}50%{transform:scale(2.9);opacity:.35}}
+.p-reading .m-armL{animation:none;transform:rotate(-42deg)}
+.p-reading .m-armR{animation:none;transform:rotate(42deg)}
+.p-reading .m-foreL{animation:none;transform:rotate(2deg)}
+.p-reading .m-foreR{animation:none;transform:rotate(-2deg)}
+.p-reading .m-legL,.p-reading .m-legR{animation:none;transform:none}
+.p-reading .m-doc{animation:none;opacity:1;transform:scale(1) translateY(-5px)}
+.p-reading .m-antenna{animation:bsmScan 1s ease-in-out infinite}
+.p-reading .m-tipglow{animation-duration:1s}
+.p-reading .m-bob{animation:bsmBreath 3.4s ease-in-out infinite}
+@keyframes bsmScan{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(10deg)}}
+.p-thinking .m-body{transform:rotate(5deg)}
+.p-thinking .m-armL{animation:none;transform:rotate(7deg)}
+.p-thinking .m-foreL{animation:none;transform:rotate(0)}
+.p-thinking .m-armR{animation:none;transform:rotate(82deg)}
+.p-thinking .m-foreR{animation:bsmChinTap 1.1s ease-in-out infinite}
+@keyframes bsmChinTap{0%,100%{transform:rotate(22deg)}50%{transform:rotate(31deg)}}
+.p-thinking .m-legL,.p-thinking .m-legR{animation:none;transform:none}
+.p-thinking .m-antenna{animation:bsmThinkSway 1.4s ease-in-out infinite}
+@keyframes bsmThinkSway{0%,100%{transform:rotate(9deg)}50%{transform:rotate(17deg)}}
+.p-thinking .m-bob{animation:bsmBreath 3.4s ease-in-out infinite,bsmPonder 2.2s ease-in-out infinite}
+@keyframes bsmPonder{0%,100%{transform:translateY(-2px) rotate(1.5deg)}50%{transform:translateY(-3px) rotate(-1.5deg)}}
+.p-thinking .m-thought{opacity:1}
+.p-thinking .m-thought circle:nth-child(1){animation:bsmDots 1.4s infinite}
+.p-thinking .m-thought circle:nth-child(2){animation:bsmDots 1.4s infinite .18s}
+.p-thinking .m-thought circle:nth-child(3){animation:bsmDots 1.4s infinite .36s}
+@keyframes bsmDots{0%,25%{opacity:.15}55%{opacity:1}100%{opacity:.15}}
+.p-searching .m-armL{animation:none;transform:rotate(7deg)}
+.p-searching .m-foreL{animation:none;transform:rotate(0)}
+.p-searching .m-armR{animation:none;transform:rotate(98deg)}
+.p-searching .m-foreR{animation:none;transform:rotate(41deg)}
+.p-searching .m-legL,.p-searching .m-legR{animation:none;transform:none}
+.p-searching .m-antenna{animation:bsmScan .55s ease-in-out infinite}
+.p-searching .m-tipglow{animation-duration:.55s}
+.p-searching .m-bob{animation:bsmScanLook 1.6s ease-in-out infinite}
+@keyframes bsmScanLook{0%,100%{transform:translateY(-2px) rotate(-4deg)}50%{transform:translateY(-3px) rotate(4deg)}}
+.p-writing .m-armL{animation:none;transform:rotate(-40deg)}
+.p-writing .m-foreL{animation:none;transform:rotate(2deg)}
+.p-writing .m-armR{animation:none;transform:rotate(52deg)}
+.p-writing .m-foreR{animation:none;transform:rotate(-8deg)}
+.p-writing .m-legL,.p-writing .m-legR{animation:none;transform:none}
+.p-writing .m-doc{animation:none;opacity:1;transform:scale(1)}
+.p-writing .m-pen{opacity:1;animation:bsmScribble .38s ease-in-out infinite}
+.p-writing .m-antenna{animation:bsmScan 1.2s ease-in-out infinite}
+.p-writing .m-tipglow{animation-duration:1.2s}
+.p-writing .m-bob{animation:bsmBreath 3.4s ease-in-out infinite,bsmWriteNod 1.3s ease-in-out infinite}
+@keyframes bsmWriteNod{0%,100%{transform:translateY(-2px) rotate(-1deg)}50%{transform:translateY(-3px) rotate(1deg)}}
+@keyframes bsmScribble{0%,100%{transform:rotate(-9deg) translateX(-1px)}50%{transform:rotate(7deg) translateX(1.5px)}}
+.p-done .m-armL{animation:bsmPumpL .62s ease-in-out infinite}
+.p-done .m-armR{animation:bsmPumpR .62s ease-in-out infinite}
+@keyframes bsmPumpL{0%,100%{transform:rotate(138deg)}50%{transform:rotate(150deg)}}
+@keyframes bsmPumpR{0%,100%{transform:rotate(-138deg)}50%{transform:rotate(-150deg)}}
+.p-done .m-foreL{animation:none;transform:rotate(24deg)}
+.p-done .m-foreR{animation:none;transform:rotate(-24deg)}
+.p-done .m-antenna{animation:bsmSway .5s ease-in-out infinite}
+.p-done .m-legL{animation:bsmStepL .62s ease-in-out infinite}
+.p-done .m-legR{animation:bsmStepR .62s ease-in-out infinite}
+.p-done .m-bob{animation:bsmCheer .62s cubic-bezier(.3,1.4,.5,1) infinite}
+@keyframes bsmCheer{0%,100%{transform:translateY(0) rotate(-2deg)}50%{transform:translateY(-8px) rotate(2deg)}}
+@media (prefers-reduced-motion:reduce){.bsm2 *{animation:none!important}}

@@ -3,12 +3,73 @@
 }
 
 body {
-  width: 320px;
+  width: 340px;
   margin: 0;
   padding: 14px 14px 12px;
   font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #1a1a1b;
   background: #f6f7f8;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.tab {
+  flex: 1;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #555;
+}
+.tab.on {
+  background: #ff4500;
+  border-color: #ff4500;
+  color: #fff;
+}
+.panel {
+  display: none;
+}
+.panel.on {
+  display: block;
+}
+label.block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+select,
+textarea,
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font: inherit;
+  box-sizing: border-box;
+}
+button.danger {
+  width: 100%;
+  margin-top: 8px;
+  border: none;
+  background: #b91c1c;
+  color: #fff;
+  font-weight: 700;
+  padding: 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.danger-row span {
+  color: #b91c1c;
+  font-weight: 600;
 }
 
 header {
@@ -108,6 +169,51 @@ h1 {
   font-size: 10px;
   color: #888;
   line-height: 1.3;
+}
+
+.dynamic-box {
+  border-color: #ffd0c0;
+  background: #fffaf8;
+}
+
+.check-row {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.check-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #ff4500;
+  flex-shrink: 0;
+}
+
+button.secondary {
+  width: 100%;
+  border: 1px solid #ff4500;
+  background: #fff;
+  color: #ff4500;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button.secondary:hover {
+  background: #fff5f0;
+}
+
+.live-cfg {
+  font-size: 10px;
+  color: #555;
+  background: #f0f0f0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
 }
 
 .stats > div {
