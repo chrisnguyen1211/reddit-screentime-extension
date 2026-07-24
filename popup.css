@@ -352,6 +352,16 @@ footer .primary:active {
   transform: scale(0.99);
 }
 
+footer .save-note {
+  margin: 8px 0 0;
+  font-size: 10px;
+  color: #666;
+  line-height: 1.35;
+}
+footer .save-note b {
+  color: #1a1a1b;
+}
+
 .note {
   margin: 8px 0 0;
   font-size: 10px;

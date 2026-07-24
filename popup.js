@@ -201,8 +201,8 @@ function save(partial = {}) {
     setStatus(data.rgl_enabled);
     const btn = $("save");
     const prev = btn.textContent;
-    btn.textContent = "Đã lưu ✓";
-    setTimeout(() => (btn.textContent = prev), 1000);
+    btn.textContent = "Đã lưu & apply ✓";
+    setTimeout(() => (btn.textContent = prev), 1400);
   });
 }
 
