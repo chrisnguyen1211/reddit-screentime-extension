@@ -57,7 +57,13 @@
   }
 
   function ensure() {
-    if (root) return root;
+    if (root && root.isConnected) return root;
+    const existing = document.querySelector("#rgl-overlay-root");
+    if (existing) {
+      [...document.querySelectorAll("#rgl-overlay-root")].slice(1).forEach((n) => n.remove());
+      root = existing;
+      return root;
+    }
     root = el("div");
     root.id = "rgl-overlay-root";
     root.className = "hidden";

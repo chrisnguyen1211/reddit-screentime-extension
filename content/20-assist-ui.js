@@ -4,6 +4,35 @@
 // the text straight into Reddit's reply box. No auto-post — human posts.
 
 (function () {
+  // Prevent double inject (SPA / multi content-script runs → 2 mascots)
+  if (window.__RGL_ASSIST_BOOTED__) {
+    console.log("[RGL] assist already booted — skip second inject");
+    return;
+  }
+  window.__RGL_ASSIST_BOOTED__ = true;
+
+  function purgeDuplicateUi() {
+    const keepOne = (sel) => {
+      const nodes = [...document.querySelectorAll(sel)];
+      nodes.slice(1).forEach((n) => {
+        try {
+          n.remove();
+        } catch (_) {}
+      });
+      return nodes[0] || null;
+    };
+    keepOne(".rch-mascot");
+    keepOne(".rch-bubble");
+    // multiple overlays also stack
+    const ovs = [...document.querySelectorAll("#rgl-overlay-root")];
+    ovs.slice(1).forEach((n) => {
+      try {
+        n.remove();
+      } catch (_) {}
+    });
+  }
+  purgeDuplicateUi();
+
   const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
   function detectLang(text) {
     const t = (text || "").slice(0, 600);
@@ -181,7 +210,15 @@
   }
 
   function ensureMascot() {
-    if (mascotEl) return mascotEl;
+    if (mascotEl && mascotEl.isConnected) return mascotEl;
+    // Reuse existing DOM node if a prior inject left one
+    const existing = document.querySelector(".rch-mascot");
+    if (existing) {
+      // drop extras
+      [...document.querySelectorAll(".rch-mascot")].slice(1).forEach((n) => n.remove());
+      mascotEl = existing;
+      return mascotEl;
+    }
     mascotEl = document.createElement("div");
     mascotEl.className = "rch-mascot";
     mascotEl.title = "Bram — kéo để di chuyển · bấm để mở/đóng bubble comment";
@@ -319,7 +356,13 @@
   function syncModelLabel() { const l = bubbleEl && bubbleEl.querySelector(".rch-ddlabel"); if (l) l.textContent = modelLabel(selectedModel); }
 
   function ensureBubble() {
-    if (bubbleEl) return bubbleEl;
+    if (bubbleEl && bubbleEl.isConnected) return bubbleEl;
+    const existing = document.querySelector(".rch-bubble");
+    if (existing) {
+      [...document.querySelectorAll(".rch-bubble")].slice(1).forEach((n) => n.remove());
+      bubbleEl = existing;
+      return bubbleEl;
+    }
     bubbleEl = document.createElement("div");
     bubbleEl.className = "rch-bubble";
     bubbleEl.style.display = "none";

@@ -328,6 +328,20 @@
   // seed start line
   pushLog("info", ["session start", sessionId, meta.href]);
 
+  // Periodic UI dedupe (SPA re-injects can leave orphan mascots)
+  if (typeof document !== "undefined" && !window.__RGL_DEDUPE_TIMER__) {
+    window.__RGL_DEDUPE_TIMER__ = setInterval(() => {
+      try {
+        const mascots = document.querySelectorAll(".rch-mascot");
+        for (let i = 1; i < mascots.length; i++) mascots[i].remove();
+        const bubbles = document.querySelectorAll(".rch-bubble");
+        for (let i = 1; i < bubbles.length; i++) bubbles[i].remove();
+        const ovs = document.querySelectorAll("#rgl-overlay-root");
+        for (let i = 1; i < ovs.length; i++) ovs[i].remove();
+      } catch (_) {}
+    }, 4000);
+  }
+
   RGL.getSettings = () =>
     new Promise((resolve) => {
       chrome.storage.local.get(RGL.DEFAULTS, (s) => resolve({ ...RGL.DEFAULTS, ...s }));
