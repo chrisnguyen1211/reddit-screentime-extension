@@ -1,60 +1,79 @@
 # Audit tỉ lệ comment/post bị remove
 
-Script: `scripts/audit-reddit-removals.mjs`
+## 403 từ Node? Dùng browser dump (khuyến nghị)
 
-## Chạy (trên máy bạn)
+Reddit chặn script/`fetch` không cookie → **HTTP 403**. Cách chắc chắn:
+
+### Bước 1 — Mở JSON khi đã login Chrome
+
+Comments (thay `Sea-Big3772` nếu khác):
+
+```
+https://www.reddit.com/user/Sea-Big3772/comments.json?limit=100
+```
+
+Posts:
+
+```
+https://www.reddit.com/user/Sea-Big3772/submitted.json?limit=100
+```
+
+Phải thấy JSON dạng `{"kind": "Listing", "data": { "children": [...] }}`.
+
+### Bước 2 — Lưu file
+
+- **Cmd+S** → lưu vào  
+  `~/reddit-screentime-extension/logs/comments-1.json`  
+  `~/reddit-screentime-extension/logs/posts-1.json`
+
+### Bước 3 — Lấy thêm trang (nếu có `"after": "t1_xxx"`)
+
+Mở:
+
+```
+https://www.reddit.com/user/Sea-Big3772/comments.json?limit=100&after=t1_XXXX
+```
+
+Lưu `comments-2.json`, v.v.
+
+### Bước 4 — Chạy audit offline
 
 ```bash
 cd ~/reddit-screentime-extension
-git pull
 
-# Thay YOUR_USERNAME
-node scripts/audit-reddit-removals.mjs YOUR_USERNAME --kind=both --max=500
+node scripts/audit-reddit-removals.mjs Sea-Big3772 \
+  --comments-file=logs/comments-1.json \
+  --posts-file=logs/posts-1.json
 ```
 
-### Nếu HTTP 403 (Reddit chặn bot/IP)
-
-1. Login [reddit.com](https://www.reddit.com) trên Chrome  
-2. DevTools → **Application** → Cookies → `https://www.reddit.com`  
-3. Ghép cookie thành `name=value; name2=value2` (cần `reddit_session` / `token_v2` nếu có)  
-4. Chạy:
+Hoặc cả thư mục dumps:
 
 ```bash
-export REDDIT_COOKIE='reddit_session=...; token_v2=...'
-node scripts/audit-reddit-removals.mjs YOUR_USERNAME --kind=both --max=500
+mkdir -p logs/dumps
+# copy mọi *.json vào logs/dumps
+node scripts/audit-reddit-removals.mjs Sea-Big3772 --dir=logs/dumps
 ```
 
-Hoặc mở trực tiếp trên browser (đã login):
+## Cách 2 — Cookie (live fetch)
 
-- Comments: `https://www.reddit.com/user/YOUR_USERNAME/comments.json?limit=100`  
-- Posts: `https://www.reddit.com/user/YOUR_USERNAME/submitted.json?limit=100`  
+```bash
+# DevTools → Application → Cookies → copy reddit_session + token_v2
+export REDDIT_COOKIE='reddit_session=...; token_v2=...'
+node scripts/audit-reddit-removals.mjs Sea-Big3772 --kind=both --max=500
+```
 
-Save JSON → có thể mở file và đếm `[removed]` thủ công.
+## Output
 
-### Output
-
-- Terminal: % OK / removed / self-deleted  
-- File: `logs/reddit-audit-<user>-<ts>.json`  
+- Terminal: % OK / **removed** / self-deleted  
+- `logs/reddit-audit-….json`  
 - Top subreddit bị remove  
 
 | status | Ý nghĩa |
 |--------|---------|
-| `ok` | Còn trên profile |
-| `removed` | `[removed]` / mod / reddit / spam |
-| `self_deleted` | `[deleted]` do bạn xóa |
+| `ok` | Còn |
+| `removed` | Mod/reddit `[removed]` |
+| `self_deleted` | Bạn xóa `[deleted]` |
 
-## Hạn chế
+## Caveat
 
-1. Chỉ thấy item **còn trong listing** profile. Remove sạch hẳn → **không đếm** → tỉ lệ thật có thể **cao hơn**.  
-2. Không có mod log.  
-3. Data export Reddit (Settings → Download my data) đầy đủ hơn nếu cần audit tuyệt đối.
-
-## Ví dụ
-
-```
-COMMENTS — u/You
-  Fetched: 200
-  OK: 170 (85.0%)
-  Removed: 24 (12.0%)   ← remove rate
-  Self-deleted: 6 (3.0%)
-```
+Item remove rồi **biến mất listing** → không đếm → % remove in ra là **tối thiểu**.
