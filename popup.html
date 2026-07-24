@@ -19,6 +19,7 @@
       <button type="button" class="tab on" data-tab="run">Run</button>
       <button type="button" class="tab" data-tab="auto">Scroll</button>
       <button type="button" class="tab" data-tab="cmt">Comment</button>
+      <button type="button" class="tab" data-tab="dist">Dist</button>
       <button type="button" class="tab" data-tab="safe">Safety</button>
     </nav>
 
@@ -159,6 +160,88 @@
           <input type="checkbox" id="rgl_autoSubmit" checked />
           <span>Auto-submit (fill + click) — ban risk</span>
         </label>
+      </div>
+    </section>
+
+    <!-- DISTRIBUTION -->
+    <section class="panel" id="panel-dist">
+      <div class="fields">
+        <label class="check-row">
+          <input type="checkbox" id="rgl_distEnabled" checked />
+          <span>Bật phân bổ comment (quota / quiet / queue)</span>
+        </label>
+        <label>
+          <span>Allowlist sub (trống = mọi sub)</span>
+          <textarea id="rgl_subAllowlist" rows="2" placeholder="micro_saas, SaaS, SideProject"></textarea>
+        </label>
+        <label>
+          <span>Blocklist sub</span>
+          <textarea id="rgl_subBlocklist" rows="1" placeholder="announcements"></textarea>
+        </label>
+        <div class="grid2">
+          <label>
+            <span>Max cmt / sub / ngày</span>
+            <input type="number" id="rgl_maxCommentsPerSubDay" min="0" max="50" value="2" />
+          </label>
+          <label>
+            <span>Max cmt / ngày</span>
+            <input type="number" id="rgl_maxCommentsPerDay" min="0" max="100" value="8" />
+          </label>
+        </div>
+        <div class="grid2">
+          <label>
+            <span>Quiet start (h local)</span>
+            <input type="number" id="rgl_quietHoursStart" min="0" max="23" value="1" />
+          </label>
+          <label>
+            <span>Quiet end (h)</span>
+            <input type="number" id="rgl_quietHoursEnd" min="0" max="23" value="7" />
+          </label>
+        </div>
+        <label>
+          <span>Session max phút (0 = off)</span>
+          <input type="number" id="rgl_sessionMaxMinutes" min="0" max="720" value="90" />
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_stayInSub" checked />
+          <span>Stay in sub (không nhảy r/all, popular)</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_queueOnly" />
+          <span>Queue only — chỉ comment URL trong hàng đợi</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_preferPromoInvite" checked />
+          <span>Ưu tiên promo-invite (Drop your SaaS…)</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_humanSubmitOnly" />
+          <span>Human submit only (fill xong, bạn bấm Comment)</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="rgl_stealthUi" />
+          <span>Stealth UI (làm mờ mascot/overlay)</span>
+        </label>
+        <label>
+          <span>Queue post URLs (mỗi dòng 1 link /comments/…)</span>
+          <textarea id="queueUrls" rows="4" placeholder="https://www.reddit.com/r/foo/comments/abc/..."></textarea>
+        </label>
+        <div class="log-row">
+          <button type="button" id="btnQueueAdd" class="secondary">Add to queue</button>
+          <button type="button" id="btnQueueRefresh" class="secondary">Refresh status</button>
+          <button type="button" id="btnQueueClearDone" class="secondary">Clear done/fail</button>
+        </div>
+        <div class="log-row">
+          <button type="button" id="btnQueueExport" class="secondary">Export queue</button>
+          <button type="button" id="btnQueueImport" class="secondary">Import queue</button>
+          <button type="button" id="btnQueueClearAll" class="secondary">Clear all</button>
+        </div>
+        <input type="file" id="queueImportFile" accept="application/json,.json,.txt" hidden />
+        <div class="live-cfg" id="distBox">Dist: —</div>
+        <p class="field-note">
+          Queue only + Full: bot navigate URL pending → comment → mark done.
+          Quiet hours / day cap / session max → cooldown hoặc OFF.
+        </p>
       </div>
     </section>
 

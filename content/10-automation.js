@@ -966,9 +966,23 @@
       return;
     }
 
-    // small reverse then maybe navigate
+    // small reverse then maybe navigate — respect stayInSub / allowlist
     doScroll(-rand(80, 220), "smooth");
     if (Math.random() < 0.28) {
+      const s = window.RGL?._settings || {};
+      if (s.rgl_stayInSub) {
+        const sub = (location.pathname.match(/\/r\/([^/]+)/i) || [])[1];
+        location.href = sub ? `/r/${sub}/new/` : "/";
+        return;
+      }
+      const allow = String(s.rgl_subAllowlist || "")
+        .split(/[\s,]+/)
+        .map((x) => x.replace(/^r\//i, "").trim())
+        .filter(Boolean);
+      if (allow.length) {
+        location.href = `/r/${allow[randInt(0, allow.length - 1)]}/new/`;
+        return;
+      }
       const paths = ["/", "/r/popular/", "/r/all/", "/new/"];
       location.href = paths[randInt(0, paths.length - 1)];
     }

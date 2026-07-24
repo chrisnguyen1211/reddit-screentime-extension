@@ -407,3 +407,13 @@
 #rgl-overlay-root.hidden {
   display: none;
 }
+
+html.rgl-stealth .rch-mascot,
+html.rgl-stealth .rch-bubble,
+html.rgl-stealth #rgl-overlay-root {
+  opacity: 0.12 !important;
+  pointer-events: none !important;
+}
+html.rgl-stealth .rch-trigger {
+  opacity: 0.35 !important;
+}

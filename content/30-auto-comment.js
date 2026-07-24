@@ -77,6 +77,16 @@
         return { ok: false, reason: g.reason, metrics: g.metrics };
       }
     } catch (_) {}
+    // Distribution: quiet hours, allowlist, daily/sub quotas, queue-only
+    try {
+      const d = RGL.dist?.allowCommentOnPage?.({
+        sub: opts.sub,
+        draftHash: opts.draftHash,
+      });
+      if (d && !d.ok) {
+        return { ok: false, reason: d.reason, dist: d };
+      }
+    } catch (_) {}
     return { ok: true };
   }
 
@@ -222,7 +232,8 @@
     let scored = null;
 
     // Promo invite → prefer OP comment (best place to seed)
-    if (opPromo && post && postScored?.pass) {
+    const preferPromo = settings().rgl_preferPromoInvite !== false;
+    if (preferPromo && opPromo && post && postScored?.pass) {
       targetEl = post;
       kind = "post";
       ctx = postCtx;
@@ -478,24 +489,28 @@
       RGL.bus.jobPhase = j.phase;
       RGL.assist?.setAutoPhase?.("SUBMIT");
       RGL.assist?.showBubble?.();
-      if (!L.autoSubmit) {
-        log("autoSubmit off — left filled in composer");
-        RGL.assist?.setAutoPhase?.("DONE · no submit");
+      const humanOnly = !!(settings().rgl_humanSubmitOnly || !L.autoSubmit);
+      if (humanOnly) {
+        log("humanSubmitOnly / autoSubmit off — draft filled, waiting for user");
+        RGL.assist?.setAutoPhase?.("DONE · human submit");
         j.phase = "DONE";
         RGL.bus.jobPhase = j.phase;
+        // still count toward dist day? no — only on successful auto submit
         return j;
       }
 
-      const sub = await RGL.assist.submitComposerForTarget(targetEl, {
+      const submitRes = await RGL.assist.submitComposerForTarget(targetEl, {
         preferGlobal: true,
         targetKind: kind,
       });
-      if (!sub.ok) {
+      if (!submitRes.ok) {
         try {
           await navigator.clipboard?.writeText(j.draftText);
         } catch (_) {}
         RGL.assist?.setAutoPhase?.("SUBMIT FAIL");
-        throw new Error(sub.reason || "submit failed");
+        const pathId = (location.pathname.match(/\/comments\/([a-z0-9]+)/i) || [])[1];
+        if (pathId) RGL.dist?.markQueue?.(pathId.toLowerCase(), "fail");
+        throw new Error(submitRes.reason || "submit failed");
       }
 
       job.lastCommentAt = Date.now();
@@ -505,17 +520,20 @@
       job.postedHashes.add(hash);
       if (RGL.bus?.stats) RGL.bus.stats.comments = (RGL.bus.stats.comments || 0) + 1;
 
-      // Ban-guard ledger
+      // Ban-guard + distribution ledger
       try {
-        const sub =
+        const subName =
           ctx?.subreddit?.replace(/^r\//, "") ||
           location.pathname.match(/\/r\/([^/]+)/i)?.[1] ||
           "";
         RGL.banGuard?.record?.(useSeed ? "seed_comment" : "comment", {
-          sub,
+          sub: subName,
           promo: useSeed,
           href: location.pathname,
         });
+        RGL.dist?.recordComment?.(subName, hash);
+        const pathId = (location.pathname.match(/\/comments\/([a-z0-9]+)/i) || [])[1];
+        if (pathId) RGL.dist?.markQueue?.(pathId.toLowerCase(), "done");
       } catch (_) {}
 
       j.phase = "DONE";
@@ -523,7 +541,7 @@
       RGL.assist?.setAutoPhase?.("DONE");
       RGL.assist?.setPose?.("done");
       RGL.assist?.showBubble?.();
-      log("comment posted", kind, sub.method, j.wordCount, "words");
+      log("comment posted", kind, submitRes.method, j.wordCount, "words");
 
       // aftercare pause — keep bubble visible so user can see the draft
       await u.sleep(u.rand(3000, 8000));

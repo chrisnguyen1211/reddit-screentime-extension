@@ -46,6 +46,21 @@
     rgl_minEngagementScore: 0.35,
     rgl_preferQuestions: true,
     rgl_commentDriftPercent: 40,
+
+    // Comment distribution / campaign
+    rgl_distEnabled: true,
+    rgl_subAllowlist: "", // comma/newline: micro_saas,SaaS (empty = all allowed)
+    rgl_subBlocklist: "announcements,reddit.com", // never comment
+    rgl_maxCommentsPerSubDay: 2,
+    rgl_maxCommentsPerDay: 8,
+    rgl_quietHoursStart: 1, // local hour 0-23 inclusive start
+    rgl_quietHoursEnd: 7, // exclusive end; if start>end wraps midnight
+    rgl_stayInSub: true, // don't jump to /r/all /popular
+    rgl_queueOnly: false, // if true, only comment URLs in queue (no random feed posts)
+    rgl_preferPromoInvite: true,
+    rgl_sessionMaxMinutes: 90, // soft stop after N minutes ON
+    rgl_humanSubmitOnly: false, // draft+fill only, no auto click Comment
+    rgl_stealthUi: false, // hide mascot/overlay chrome when true
   };
 
   function rand(min, max) {

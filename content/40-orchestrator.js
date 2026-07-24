@@ -73,6 +73,13 @@
           return null;
         }
       })(),
+      dist: (() => {
+        try {
+          return RGL.dist?.snapshot?.() || null;
+        } catch (_) {
+          return null;
+        }
+      })(),
     };
 
     if (!s.rgl_enabled) {
@@ -90,15 +97,61 @@
   async function runFeedPhase(mode) {
     RGL.bus.phase = "FEED";
     const allowUpvote = mode !== "observe";
+
+    // Distribution scheduler
+    try {
+      await RGL.dist?.load?.();
+      RGL.dist?.applyStealth?.();
+      const act = RGL.dist?.nextFeedAction?.();
+      if (act?.action === "stop") {
+        RGL.log?.("dist stop", act.reason);
+        RGL.bus.phase = "COOLDOWN";
+        flashDist(act.reason);
+        await U().sleep(5000);
+        stop();
+        chrome.storage.local.set({ rgl_enabled: false });
+        return;
+      }
+      if (act?.action === "wait") {
+        RGL.bus.phase = "COOLDOWN";
+        RGL.bus.lastFlash = act.reason || "dist wait";
+        RGL.bus.lastFlashAt = Date.now();
+        await U().sleep(U().rand(8000, 20000));
+        return;
+      }
+      if (act?.action === "navigate" && act.url && mode === "full") {
+        RGL.log?.("dist navigate", act.url);
+        if (act.item?.id) {
+          // keep pending until comment done
+        }
+        location.href = act.url;
+        await U().sleep(3000);
+        return;
+      }
+      if (act?.action === "on-queue-post") {
+        // fall through to post phase on next loop — we're already on post? 
+        // feed phase only when !isPostPage — so this is rare
+      }
+    } catch (e) {
+      RGL.log?.("dist feed error", e);
+    }
+
     await RGL.automation.tickFeed({ allowUpvote });
 
-    // open post chance
-    if (mode !== "observe" && !U().isPostPage()) {
+    // open post chance (organic) — skip if queue-only
+    const s = RGL._settings || {};
+    if (mode !== "observe" && !U().isPostPage() && !s.rgl_queueOnly) {
+      // prefer posts in allowlist / promo when possible: default maybeOpenPost
       const opened = await RGL.automation.maybeOpenPost?.();
       if (opened) {
         await U().sleep(U().normal(1500, 400, 900, 3000));
       }
     }
+  }
+
+  function flashDist(msg) {
+    RGL.bus.lastFlash = String(msg || "");
+    RGL.bus.lastFlashAt = Date.now();
   }
 
   async function runPostPhase(mode) {
@@ -221,6 +274,7 @@
     running = true;
     abort = false;
     RGL.bus.phase = "FEED";
+    RGL.bus.sessionStartedAt = Date.now();
     RGL.automation?.resume?.();
     // seed automation enabled flag without its own loop
     const st = RGL.automation?.getState?.();
@@ -230,7 +284,11 @@
       st.abort = false;
       st.rhythm.sessionStart = Date.now();
     }
-    log("start", RGL._settings.rgl_mode);
+    try {
+      await RGL.dist?.load?.();
+      RGL.dist?.applyStealth?.();
+    } catch (_) {}
+    log("start", RGL._settings.rgl_mode, RGL.dist?.snapshot?.());
     mainLoop();
   }
 
@@ -319,6 +377,43 @@
     if (msg?.type === "RGL_BAN_GUARD_CLEAR") {
       RGL.banGuard?.clear?.();
       sendResponse({ ok: true });
+      return true;
+    }
+    if (msg?.type === "RGL_DIST") {
+      (async () => {
+        try {
+          await RGL.dist?.load?.();
+          if (msg.op === "add" && msg.urls) {
+            const n = RGL.dist.addToQueue(msg.urls, msg.note || "");
+            sendResponse({ ok: true, added: n, snapshot: RGL.dist.snapshot() });
+            return;
+          }
+          if (msg.op === "import" && msg.payload != null) {
+            const n = RGL.dist.importQueue(msg.payload);
+            sendResponse({ ok: true, added: n, snapshot: RGL.dist.snapshot() });
+            return;
+          }
+          if (msg.op === "export") {
+            sendResponse({ ok: true, data: RGL.dist.exportQueue(), snapshot: RGL.dist.snapshot() });
+            return;
+          }
+          if (msg.op === "clear") {
+            RGL.dist.clearQueue(msg.status || null);
+            sendResponse({ ok: true, snapshot: RGL.dist.snapshot() });
+            return;
+          }
+          if (msg.op === "clearDone") {
+            RGL.dist.clearQueue("done");
+            RGL.dist.clearQueue("skip");
+            RGL.dist.clearQueue("fail");
+            sendResponse({ ok: true, snapshot: RGL.dist.snapshot() });
+            return;
+          }
+          sendResponse({ ok: true, snapshot: RGL.dist?.snapshot?.() });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message });
+        }
+      })();
       return true;
     }
   });

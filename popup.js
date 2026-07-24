@@ -26,6 +26,19 @@ const KEYS = [
   "rgl_preferQuestions",
   "rgl_autoSubmit",
   "rgl_autoCommentEnabled",
+  "rgl_distEnabled",
+  "rgl_subAllowlist",
+  "rgl_subBlocklist",
+  "rgl_maxCommentsPerSubDay",
+  "rgl_maxCommentsPerDay",
+  "rgl_quietHoursStart",
+  "rgl_quietHoursEnd",
+  "rgl_stayInSub",
+  "rgl_queueOnly",
+  "rgl_preferPromoInvite",
+  "rgl_sessionMaxMinutes",
+  "rgl_humanSubmitOnly",
+  "rgl_stealthUi",
 ];
 
 const DEFAULTS = {
@@ -54,6 +67,19 @@ const DEFAULTS = {
   rgl_preferQuestions: true,
   rgl_autoSubmit: true,
   rgl_autoCommentEnabled: true,
+  rgl_distEnabled: true,
+  rgl_subAllowlist: "",
+  rgl_subBlocklist: "announcements,reddit.com",
+  rgl_maxCommentsPerSubDay: 2,
+  rgl_maxCommentsPerDay: 8,
+  rgl_quietHoursStart: 1,
+  rgl_quietHoursEnd: 7,
+  rgl_stayInSub: true,
+  rgl_queueOnly: false,
+  rgl_preferPromoInvite: true,
+  rgl_sessionMaxMinutes: 90,
+  rgl_humanSubmitOnly: false,
+  rgl_stealthUi: false,
 };
 
 function refreshLabels() {
@@ -98,6 +124,19 @@ function readForm() {
   data.rgl_preferQuestions = $("rgl_preferQuestions").checked;
   data.rgl_autoSubmit = $("rgl_autoSubmit").checked;
   data.rgl_autoCommentEnabled = true;
+  data.rgl_distEnabled = $("rgl_distEnabled")?.checked !== false;
+  data.rgl_subAllowlist = $("rgl_subAllowlist")?.value || "";
+  data.rgl_subBlocklist = $("rgl_subBlocklist")?.value || "";
+  data.rgl_maxCommentsPerSubDay = Number($("rgl_maxCommentsPerSubDay")?.value ?? 2);
+  data.rgl_maxCommentsPerDay = Number($("rgl_maxCommentsPerDay")?.value ?? 8);
+  data.rgl_quietHoursStart = Number($("rgl_quietHoursStart")?.value ?? 1);
+  data.rgl_quietHoursEnd = Number($("rgl_quietHoursEnd")?.value ?? 7);
+  data.rgl_stayInSub = !!$("rgl_stayInSub")?.checked;
+  data.rgl_queueOnly = !!$("rgl_queueOnly")?.checked;
+  data.rgl_preferPromoInvite = $("rgl_preferPromoInvite")?.checked !== false;
+  data.rgl_sessionMaxMinutes = Number($("rgl_sessionMaxMinutes")?.value ?? 90);
+  data.rgl_humanSubmitOnly = !!$("rgl_humanSubmitOnly")?.checked;
+  data.rgl_stealthUi = !!$("rgl_stealthUi")?.checked;
   return data;
 }
 
@@ -126,6 +165,19 @@ function fillForm(s) {
   $("rgl_minEngagementScore").value = s.rgl_minEngagementScore ?? 0.35;
   $("rgl_preferQuestions").checked = s.rgl_preferQuestions !== false;
   $("rgl_autoSubmit").checked = s.rgl_autoSubmit !== false;
+  if ($("rgl_distEnabled")) $("rgl_distEnabled").checked = s.rgl_distEnabled !== false;
+  if ($("rgl_subAllowlist")) $("rgl_subAllowlist").value = s.rgl_subAllowlist || "";
+  if ($("rgl_subBlocklist")) $("rgl_subBlocklist").value = s.rgl_subBlocklist || "announcements,reddit.com";
+  if ($("rgl_maxCommentsPerSubDay")) $("rgl_maxCommentsPerSubDay").value = s.rgl_maxCommentsPerSubDay ?? 2;
+  if ($("rgl_maxCommentsPerDay")) $("rgl_maxCommentsPerDay").value = s.rgl_maxCommentsPerDay ?? 8;
+  if ($("rgl_quietHoursStart")) $("rgl_quietHoursStart").value = s.rgl_quietHoursStart ?? 1;
+  if ($("rgl_quietHoursEnd")) $("rgl_quietHoursEnd").value = s.rgl_quietHoursEnd ?? 7;
+  if ($("rgl_sessionMaxMinutes")) $("rgl_sessionMaxMinutes").value = s.rgl_sessionMaxMinutes ?? 90;
+  if ($("rgl_stayInSub")) $("rgl_stayInSub").checked = s.rgl_stayInSub !== false;
+  if ($("rgl_queueOnly")) $("rgl_queueOnly").checked = !!s.rgl_queueOnly;
+  if ($("rgl_preferPromoInvite")) $("rgl_preferPromoInvite").checked = s.rgl_preferPromoInvite !== false;
+  if ($("rgl_humanSubmitOnly")) $("rgl_humanSubmitOnly").checked = !!s.rgl_humanSubmitOnly;
+  if ($("rgl_stealthUi")) $("rgl_stealthUi").checked = !!s.rgl_stealthUi;
   refreshLabels();
   setStatus(s.rgl_enabled);
 }
@@ -351,6 +403,145 @@ function refreshBanGuard() {
     });
   });
 }
+
+function refreshDist() {
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_DIST", op: "status" }, (res) => {
+      const box = $("distBox");
+      if (!box) return;
+      if (chrome.runtime.lastError || !res?.ok) {
+        box.textContent = "Dist: F5 tab Reddit / reload extension";
+        return;
+      }
+      const s = res.snapshot || {};
+      const day = s.day || {};
+      box.textContent =
+        `pending ${s.queuePending ?? 0} · done ${s.queueDone ?? 0}\n` +
+        `today ${day.total ?? 0}/${s.maxDay ?? "?"} · quiet=${!!s.quiet} (${(s.quietRange || []).join("–")})\n` +
+        `stayInSub=${!!s.stayInSub} queueOnly=${!!s.queueOnly} humanSubmit=${!!s.humanSubmitOnly}\n` +
+        `allow: ${(s.allowlist || []).slice(0, 6).join(", ") || "(all)"}\n` +
+        `bySub: ${JSON.stringify(day.bySub || {})}`;
+    });
+  });
+}
+
+$("btnQueueAdd")?.addEventListener("click", () => {
+  const urls = $("queueUrls")?.value || "";
+  if (!urls.trim()) return;
+  save(); // persist dist settings first
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_DIST", op: "add", urls }, (res) => {
+      if ($("distBox")) {
+        $("distBox").textContent = res?.ok
+          ? `Added ${res.added} · pending ${res.snapshot?.queuePending}`
+          : `Add fail: ${res?.error || chrome.runtime.lastError?.message}`;
+      }
+      if (res?.ok && $("queueUrls")) $("queueUrls").value = "";
+      refreshDist();
+    });
+  });
+});
+$("btnQueueRefresh")?.addEventListener("click", refreshDist);
+$("btnQueueClearDone")?.addEventListener("click", () => {
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_DIST", op: "clearDone" }, () => refreshDist());
+  });
+});
+$("btnQueueClearAll")?.addEventListener("click", () => {
+  if (!confirm("Xóa toàn bộ queue?")) return;
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_DIST", op: "clear" }, () => refreshDist());
+  });
+});
+$("btnQueueExport")?.addEventListener("click", () => {
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_DIST", op: "status" }, (res) => {
+      if (chrome.runtime.lastError || !res?.ok) {
+        // fallback: storage
+        chrome.storage.local.get(["rgl_postQueue", "rgl_distDayStats"], (s) => {
+          downloadJson(
+            {
+              version: 1,
+              exportedAt: new Date().toISOString(),
+              queue: s.rgl_postQueue || [],
+              dayStats: s.rgl_distDayStats || null,
+            },
+            `rgl-queue-${Date.now()}.json`
+          );
+          if ($("distBox")) $("distBox").textContent = "Exported from storage";
+        });
+        return;
+      }
+      const snap = res.snapshot || {};
+      downloadJson(
+        {
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          queue: snap.queue || [],
+          dayStats: snap.day || null,
+          settingsHint: {
+            allowlist: snap.allowlist,
+            maxDay: snap.maxDay,
+            maxSubDay: snap.maxSubDay,
+            quietRange: snap.quietRange,
+          },
+        },
+        `rgl-queue-${Date.now()}.json`
+      );
+      if ($("distBox")) $("distBox").textContent = `Exported ${(snap.queue || []).length} items`;
+    });
+  });
+});
+$("btnQueueImport")?.addEventListener("click", () => {
+  $("queueImportFile")?.click();
+});
+$("queueImportFile")?.addEventListener("change", (ev) => {
+  const file = ev.target?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      let urls = "";
+      const text = String(reader.result || "");
+      if (file.name.endsWith(".json") || text.trim().startsWith("{") || text.trim().startsWith("[")) {
+        const data = JSON.parse(text);
+        const items = Array.isArray(data) ? data : data.queue || data.urls || [];
+        urls = items
+          .map((x) => (typeof x === "string" ? x : x.url || x.href || ""))
+          .filter(Boolean)
+          .join("\n");
+      } else {
+        urls = text;
+      }
+      if (!urls.trim()) {
+        if ($("distBox")) $("distBox").textContent = "Import: empty file";
+        return;
+      }
+      if ($("queueUrls")) $("queueUrls").value = urls;
+      save();
+      withActiveRedditTab((tabId) => {
+        chrome.tabs.sendMessage(tabId, { type: "RGL_DIST", op: "add", urls }, (res) => {
+          if ($("distBox")) {
+            $("distBox").textContent = res?.ok
+              ? `Imported +${res.added} · pending ${res.snapshot?.queuePending}`
+              : `Import fail: ${res?.error || chrome.runtime.lastError?.message}`;
+          }
+          refreshDist();
+        });
+      });
+    } catch (e) {
+      if ($("distBox")) $("distBox").textContent = `Import parse error: ${e.message}`;
+    }
+    ev.target.value = "";
+  };
+  reader.readAsText(file);
+});
+
+document.querySelectorAll(".tab").forEach((t) => {
+  t.addEventListener("click", () => {
+    if (t.dataset.tab === "dist") setTimeout(refreshDist, 200);
+  });
+});
 
 $("btnBanGuardRefresh")?.addEventListener("click", refreshBanGuard);
 $("btnBanGuardClear")?.addEventListener("click", () => {

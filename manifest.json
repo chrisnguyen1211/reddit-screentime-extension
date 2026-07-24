@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Reddit Growth Lab",
-  "version": "2.0.14",
-  "description": "Unified lab: human screentime scroll + upvote + LLM comment/reply (fill→submit) with typing latency. Test accounts only.",
+  "version": "2.1.0",
+  "description": "Reddit Growth Lab: screentime, upvote, auto-comment with distribution (queue, quotas, quiet hours, ban-guard).",
   "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [
     "*://*.reddit.com/*",
@@ -38,6 +38,7 @@
         "content/00-shared.js",
         "content/05-overlay.js",
         "content/08-ban-guard.js",
+        "content/12-distribution.js",
         "content/10-automation.js",
         "content/20-assist-ui.js",
         "content/30-auto-comment.js",

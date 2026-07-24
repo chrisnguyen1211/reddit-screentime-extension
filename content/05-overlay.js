@@ -357,6 +357,11 @@
       const ratio =
         bg.ratioValuePerPromo == null ? "∞" : Number(bg.ratioValuePerPromo).toFixed(1);
       status = `Ban-risk ${bg.band} ${bg.risk}/100 · value:promo ~${ratio}:1 · cmt/1h ${bg.comments1h}`;
+    } else if (data.dist) {
+      const d = data.dist;
+      if (d.quiet) status = `Quiet hours ${ (d.quietRange || []).join("–") } · queue ${d.queuePending ?? 0}`;
+      else if (d.queuePending)
+        status = `Queue ${d.queuePending} pending · today ${d.day?.total ?? 0}/${d.maxDay ?? "?"}`;
     }
     root.querySelector(".rgl-status").textContent = status;
 
