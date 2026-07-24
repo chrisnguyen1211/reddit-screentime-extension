@@ -1115,7 +1115,7 @@
   // Extra drift keys for comment rhythm (shared mood with scroll)
   const EXTRA_DRIFT = ["commentChance", "commentWpm", "minGapSec"];
   const EXTRA_BOUNDS = {
-    commentChance: [0, 40],
+    commentChance: [0, 100],
     commentWpm: [18, 70],
     minGapSec: [90, 1200],
   };
