@@ -419,11 +419,19 @@
     q.querySelector("blockquote").textContent = `“${excerpt}${excerpt.length >= 280 ? "…" : ""}”`;
   }
   function renderDraft(d) {
+    ensureBubble();
     const ta = bubbleEl.querySelector(".rch-draft");
     lastDraft = d;
-    if (!d || d.error) { ta.value = ""; ta.placeholder = d && d.error ? "⚠️ " + d.error : "…"; }
-    else ta.value = d.comment || "";
-    ta.style.height = "auto"; ta.style.height = Math.min(280, ta.scrollHeight + 2) + "px";
+    bubbleEl.dataset.has = "1";
+    if (!d || d.error) {
+      ta.value = "";
+      ta.placeholder = d && d.error ? "⚠️ " + d.error : "…";
+    } else {
+      ta.value = d.comment || "";
+    }
+    ta.style.height = "auto";
+    ta.style.height = Math.min(280, ta.scrollHeight + 2) + "px";
+    if (isBubbleVisible()) requestAnimationFrame(() => positionBubble());
   }
 
   // ── carry a Fill action across feed → post navigation ──────────────────────
