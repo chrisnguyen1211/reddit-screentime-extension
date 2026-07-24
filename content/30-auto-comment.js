@@ -59,7 +59,7 @@
     }
   }
 
-  function budgetOk() {
+  function budgetOk(opts = {}) {
     refreshHourBucket();
     const L = live();
     const now = Date.now();
@@ -69,6 +69,14 @@
     if (job.lastCommentAt && now - job.lastCommentAt < gapNeed) {
       return { ok: false, reason: "gap", waitMs: gapNeed - (now - job.lastCommentAt) };
     }
+    // Anti-shadowban guard (9:1, velocity, multi-sub)
+    try {
+      const kind = opts.seed ? "seed" : "comment";
+      const g = RGL.banGuard?.allowAuto?.(kind);
+      if (g && !g.ok) {
+        return { ok: false, reason: g.reason, metrics: g.metrics };
+      }
+    } catch (_) {}
     return { ok: true };
   }
 
@@ -175,7 +183,8 @@
     if (!s.rgl_ackRisk) return null;
     if (!U().isPostPage()) return null;
 
-    const bud = budgetOk();
+    // Pre-check budget without seed flag; re-check after we know forceSeed
+    let bud = budgetOk({ seed: false });
     if (!bud.ok) {
       log("budget skip", bud);
       return null;
@@ -257,10 +266,24 @@
       }
     }
 
-    const forceSeed =
+    let forceSeed =
       !!scored?.promo?.invite ||
       !!opPromo ||
       !!U().detectPromoInvite?.(targetText(kind, ctx))?.invite;
+
+    // If promo invite wants seed but ban-guard blocks seed, fall back to organic or skip
+    if (forceSeed) {
+      const seedGate = budgetOk({ seed: true });
+      if (!seedGate.ok) {
+        log("promo seed blocked by ban-guard — organic only or skip", seedGate.reason);
+        forceSeed = false;
+        const orgGate = budgetOk({ seed: false });
+        if (!orgGate.ok) {
+          log("budget skip after seed block", orgGate);
+          return null;
+        }
+      }
+    }
 
     return runJob({ targetEl, kind, ctx, scored, forceSeed });
   }
@@ -481,6 +504,19 @@
       job.touchedThreads.add(threadKey());
       job.postedHashes.add(hash);
       if (RGL.bus?.stats) RGL.bus.stats.comments = (RGL.bus.stats.comments || 0) + 1;
+
+      // Ban-guard ledger
+      try {
+        const sub =
+          ctx?.subreddit?.replace(/^r\//, "") ||
+          location.pathname.match(/\/r\/([^/]+)/i)?.[1] ||
+          "";
+        RGL.banGuard?.record?.(useSeed ? "seed_comment" : "comment", {
+          sub,
+          promo: useSeed,
+          href: location.pathname,
+        });
+      } catch (_) {}
 
       j.phase = "DONE";
       RGL.bus.jobPhase = j.phase;

@@ -350,11 +350,15 @@
     // Prefer short-lived flash from automation over generic sentence
     const flash = window.RGL?.bus?.lastFlash;
     const flashAge = Date.now() - (window.RGL?.bus?.lastFlashAt || 0);
-    if (flash && flashAge < 3500) {
-      root.querySelector(".rgl-status").textContent = flash;
-    } else {
-      root.querySelector(".rgl-status").textContent = statusSentence({ ...data, phase });
+    const bg = data.banGuard;
+    let status = statusSentence({ ...data, phase });
+    if (flash && flashAge < 3500) status = flash;
+    else if (bg && bg.band && bg.band !== "green") {
+      const ratio =
+        bg.ratioValuePerPromo == null ? "∞" : Number(bg.ratioValuePerPromo).toFixed(1);
+      status = `Ban-risk ${bg.band} ${bg.risk}/100 · value:promo ~${ratio}:1 · cmt/1h ${bg.comments1h}`;
     }
+    root.querySelector(".rgl-status").textContent = status;
 
     applyCollapse();
     maybeHealth();

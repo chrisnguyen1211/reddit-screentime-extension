@@ -720,6 +720,10 @@
       STATE.upvoted.add(post);
       STATE.lastUpvoteAt = Date.now();
       STATE.stats.upvotes += 1;
+      try {
+        const sub = location.pathname.match(/\/r\/([^/]+)/i)?.[1] || "";
+        window.RGL?.banGuard?.record?.("upvote", { sub, promo: false });
+      } catch (_) {}
       flashStatus(`⬆ post #${STATE.stats.upvotes}`);
       log("upvoted post", STATE.stats.upvotes);
     }
@@ -852,6 +856,10 @@
       STATE.upvoted.add(target);
       STATE.lastCommentUpvoteAt = Date.now();
       STATE.stats.commentUpvotes += 1;
+      try {
+        const sub = location.pathname.match(/\/r\/([^/]+)/i)?.[1] || "";
+        window.RGL?.banGuard?.record?.("upvote", { sub, promo: false });
+      } catch (_) {}
       flashStatus(`⬆ comment #${STATE.stats.commentUpvotes}`);
     }
   }

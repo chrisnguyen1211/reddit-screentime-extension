@@ -327,6 +327,47 @@ $("save").addEventListener("click", () => {
   save();
 });
 
+function refreshBanGuard() {
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_BAN_GUARD" }, (res) => {
+      const box = $("banGuardBox");
+      if (!box) return;
+      if (chrome.runtime.lastError || !res?.ok) {
+        box.textContent = "Ban-guard: F5 tab Reddit / reload extension";
+        return;
+      }
+      const m = res.metrics || {};
+      const ratio =
+        m.ratioValuePerPromo == null || m.ratioValuePerPromo === Infinity
+          ? "∞"
+          : Number(m.ratioValuePerPromo).toFixed(1);
+      const flags = (m.flags || []).map((f) => f.msg).join(" · ") || "no flags";
+      box.textContent =
+        `Risk ${m.band || "?"} ${m.risk ?? "—"}/100\n` +
+        `value:promo ~${ratio}:1 (target ≥9:1) · promoActs ${m.promoActs ?? 0} · valueActs ${m.valueActs ?? 0}\n` +
+        `cmt 1h/24h: ${m.comments1h ?? 0}/${m.comments24h ?? 0} · subs1h: ${(m.subs1h || []).length}\n` +
+        `blockSeed=${!!m.blockSeed} blockCmt=${!!m.blockComment}\n` +
+        flags;
+    });
+  });
+}
+
+$("btnBanGuardRefresh")?.addEventListener("click", refreshBanGuard);
+$("btnBanGuardClear")?.addEventListener("click", () => {
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_BAN_GUARD_CLEAR" }, () => {
+      if ($("banGuardBox")) $("banGuardBox").textContent = "Ban-guard log cleared";
+    });
+  });
+});
+
+// refresh when opening safety tab
+document.querySelectorAll(".tab").forEach((t) => {
+  t.addEventListener("click", () => {
+    if (t.dataset.tab === "safe") setTimeout(refreshBanGuard, 200);
+  });
+});
+
 $("btnExportLog")?.addEventListener("click", () => {
   withActiveRedditTab((tabId) => {
     chrome.tabs.sendMessage(tabId, { type: "RGL_GET_LOG" }, (res) => {

@@ -66,6 +66,13 @@
       health: {
         model: s.rgl_model || "xai/grok-4",
       },
+      banGuard: (() => {
+        try {
+          return RGL.banGuard?.compute?.() || null;
+        } catch (_) {
+          return null;
+        }
+      })(),
     };
 
     if (!s.rgl_enabled) {
@@ -297,6 +304,20 @@
     }
     if (msg?.type === "RGL_CLEAR_LOG") {
       RGL.sessionLog?.clear?.();
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (msg?.type === "RGL_BAN_GUARD") {
+      try {
+        RGL.banGuard?.load?.();
+        sendResponse({ ok: true, ...(RGL.banGuard?.snapshot?.() || {}) });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true;
+    }
+    if (msg?.type === "RGL_BAN_GUARD_CLEAR") {
+      RGL.banGuard?.clear?.();
       sendResponse({ ok: true });
       return true;
     }
