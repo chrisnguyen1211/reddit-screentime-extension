@@ -84,10 +84,13 @@ background.js + background-llm.js
 docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md
 ```
 
-## Overlay design
+## Docs
 
-Prompt để Claude generate UI overlay:  
-[`docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md`](docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md)
+| File | Nội dung |
+|------|----------|
+| [`docs/ALGORITHMS.md`](docs/ALGORITHMS.md) | **Giải thích kỹ** 3 mode OBS / ENG / FULL + algorithm (VI + EN summary) |
+| [`docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md`](docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md) | Prompt design overlay |
+| [`docs/RGL-Overlay-standalone-source.html`](docs/RGL-Overlay-standalone-source.html) | Bản Claude generate (archive) |
 
 ## Risk
 
