@@ -128,73 +128,173 @@
   let currentCtx = null, currentTargetEl = null, lastDraft = null;
   let selectedModel = "xai/grok-4";
   let seeding = false;
-  let dragStart = null, dragging = false;
+  let dragStart = null, dragging = false, dragPointerId = null;
   let scanTimer = null, idleTimer = null;
   let scanInFlight = false, scanRequestId = 0;
   let pendingFillRestoreInFlight = false;
+  let bubbleOpen = false;
   const PENDING_FILL_KEY = "rch:pending-fill:v1";
   const PENDING_FILL_TTL_MS = 2 * 60 * 1000;
   try { chrome.storage?.local.get(["rchModel", "rchSeed"], (r) => { if (r) { if (r.rchModel) selectedModel = r.rchModel; if (r.rchSeed) seeding = true; syncModelLabel(); syncSeed(); } }); } catch (_) {}
+
+  function isBubbleVisible() {
+    return !!(bubbleEl && bubbleEl.style.display !== "none" && bubbleOpen);
+  }
+
+  function showBubble() {
+    ensureMascot();
+    ensureBubble();
+    bubbleOpen = true;
+    bubbleEl.style.display = "block";
+    bubbleEl.dataset.has = "1";
+    bubbleEl.setAttribute("aria-hidden", "false");
+    mascotEl.classList.add("rch-has-bubble");
+    positionBubble();
+    // reflow after paint (height may change with draft)
+    requestAnimationFrame(() => positionBubble());
+  }
+
+  function hideBubble() {
+    if (!bubbleEl) return;
+    bubbleOpen = false;
+    bubbleEl.style.display = "none";
+    bubbleEl.setAttribute("aria-hidden", "true");
+    if (mascotEl) mascotEl.classList.remove("rch-has-bubble");
+  }
+
+  function toggleBubble() {
+    ensureBubble();
+    // Allow reopen even if user closed with ✕, as long as we have session draft/ctx
+    const hasContent =
+      bubbleEl.dataset.has === "1" ||
+      !!(bubbleEl.querySelector(".rch-draft")?.value) ||
+      !!lastDraft ||
+      !!currentCtx;
+    if (!hasContent) {
+      // No generate yet — still open empty shell with hint
+      const ta = bubbleEl.querySelector(".rch-draft");
+      if (ta && !ta.value) ta.placeholder = "Bấm ✨ Comment/Reply trên post để Bram soạn…";
+      bubbleEl.dataset.has = "1";
+    }
+    if (isBubbleVisible()) hideBubble();
+    else showBubble();
+  }
 
   function ensureMascot() {
     if (mascotEl) return mascotEl;
     mascotEl = document.createElement("div");
     mascotEl.className = "rch-mascot";
-    mascotEl.title = "Bravestep · Bram — kéo để di chuyển, bấm để mở/ẩn";
+    mascotEl.title = "Bram — kéo để di chuyển · bấm để mở/đóng bubble comment";
+    mascotEl.setAttribute("role", "button");
+    mascotEl.tabIndex = 0;
     mascotEl.innerHTML = bramSvg("idle", 92);
     mascotEl.querySelector(".m-face").innerHTML = bramFace("happy");
     document.body.appendChild(mascotEl);
     try {
       chrome.storage?.local.get(["rchPos"], (r) => {
         // Prefer bottom-left default so mascot doesn't sit on Claude overlay (bottom-right).
-        // Only restore saved pos if it was on the left half of the screen.
         if (r && r.rchPos && Number(r.rchPos.left) < window.innerWidth * 0.45) {
           mascotEl.style.left = r.rchPos.left + "px";
           mascotEl.style.top = r.rchPos.top + "px";
           mascotEl.style.right = "auto";
           mascotEl.style.bottom = "auto";
         } else if (r && r.rchPos) {
-          // Clear old bottom-right saves that conflicted with overlay
           try { chrome.storage.local.remove("rchPos"); } catch (_) {}
         }
-        if (bubbleEl && bubbleEl.style.display !== "none") positionBubble();
+        if (isBubbleVisible()) positionBubble();
       });
     } catch (_) {}
-    // drag to move (the bubble follows); a plain click toggles the bubble
-    mascotEl.addEventListener("pointerdown", (e) => { dragStart = { x: e.clientX, y: e.clientY, rect: mascotEl.getBoundingClientRect() }; dragging = false; try { mascotEl.setPointerCapture(e.pointerId); } catch (_) {} });
+
+    // Drag to move (bubble follows). Click (no drag) toggles bubble.
+    mascotEl.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      dragPointerId = e.pointerId;
+      dragStart = { x: e.clientX, y: e.clientY, rect: mascotEl.getBoundingClientRect() };
+      dragging = false;
+      try { mascotEl.setPointerCapture(e.pointerId); } catch (_) {}
+    });
     mascotEl.addEventListener("pointermove", (e) => {
-      if (!dragStart) return;
-      const dx = e.clientX - dragStart.x, dy = e.clientY - dragStart.y;
-      if (!dragging && Math.hypot(dx, dy) < 5) return;
-      dragging = true; mascotEl.classList.add("dragging");
+      if (!dragStart || e.pointerId !== dragPointerId) return;
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      if (!dragging && Math.hypot(dx, dy) < 6) return;
+      dragging = true;
+      mascotEl.classList.add("dragging");
       const left = Math.max(4, Math.min(window.innerWidth - dragStart.rect.width - 4, dragStart.rect.left + dx));
       const top = Math.max(4, Math.min(window.innerHeight - dragStart.rect.height - 4, dragStart.rect.top + dy));
-      mascotEl.style.left = left + "px"; mascotEl.style.top = top + "px"; mascotEl.style.right = "auto"; mascotEl.style.bottom = "auto";
-      if (bubbleEl && bubbleEl.style.display !== "none") positionBubble();
+      mascotEl.style.left = left + "px";
+      mascotEl.style.top = top + "px";
+      mascotEl.style.right = "auto";
+      mascotEl.style.bottom = "auto";
+      if (isBubbleVisible()) positionBubble();
     });
-    mascotEl.addEventListener("pointerup", (e) => {
+    const endDrag = (e) => {
+      if (dragPointerId != null && e.pointerId !== dragPointerId) return;
       try { mascotEl.releasePointerCapture(e.pointerId); } catch (_) {}
-      if (dragStart && !dragging) { if (bubbleEl && bubbleEl.dataset.has === "1") { bubbleEl.style.display = bubbleEl.style.display === "none" ? "block" : "none"; if (bubbleEl.style.display !== "none") positionBubble(); } }
-      if (dragging) { const r = mascotEl.getBoundingClientRect(); try { chrome.storage?.local.set({ rchPos: { left: Math.round(r.left), top: Math.round(r.top) } }); } catch (_) {} }
-      mascotEl.classList.remove("dragging"); dragStart = null; dragging = false;
+      const wasDrag = dragging;
+      if (dragStart && !wasDrag) {
+        // pure click → open/minimize generated-comment bubble
+        e.preventDefault?.();
+        toggleBubble();
+      }
+      if (wasDrag) {
+        const r = mascotEl.getBoundingClientRect();
+        try {
+          chrome.storage?.local.set({ rchPos: { left: Math.round(r.left), top: Math.round(r.top) } });
+        } catch (_) {}
+        if (isBubbleVisible()) positionBubble();
+      }
+      mascotEl.classList.remove("dragging");
+      dragStart = null;
+      dragging = false;
+      dragPointerId = null;
+    };
+    mascotEl.addEventListener("pointerup", endDrag);
+    mascotEl.addEventListener("pointercancel", endDrag);
+    mascotEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleBubble();
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      if (isBubbleVisible()) positionBubble();
     });
     return mascotEl;
   }
+
+  /** Anchor bubble above mascot (always attached). */
   function positionBubble() {
     if (!bubbleEl || !mascotEl) return;
     const r = mascotEl.getBoundingClientRect();
-    // Keep bubble above mascot; prefer left side (mascot default is bottom-left)
-    // so it never covers #rgl-overlay-root (bottom-right Claude panel).
-    bubbleEl.style.top = "auto";
-    const spaceRight = window.innerWidth - r.right;
-    if (r.left < window.innerWidth / 2) {
-      bubbleEl.style.left = Math.max(8, r.left) + "px";
-      bubbleEl.style.right = "auto";
+    const bw = bubbleEl.offsetWidth || 340;
+    const bh = bubbleEl.offsetHeight || 220;
+    const gap = 12;
+    const margin = 8;
+
+    // Prefer above mascot; if not enough room, place below
+    let top = r.top - bh - gap;
+    if (top < margin) top = Math.min(window.innerHeight - bh - margin, r.bottom + gap);
+
+    // Align horizontally with mascot (left-edge for left half, right-edge for right half)
+    let left;
+    if (r.left + r.width / 2 < window.innerWidth / 2) {
+      left = r.left;
+      bubbleEl.classList.remove("rch-bubble--right");
+      bubbleEl.classList.add("rch-bubble--left");
     } else {
-      bubbleEl.style.left = "auto";
-      bubbleEl.style.right = Math.max(8, spaceRight) + "px";
+      left = r.right - bw;
+      bubbleEl.classList.remove("rch-bubble--left");
+      bubbleEl.classList.add("rch-bubble--right");
     }
-    bubbleEl.style.bottom = Math.max(8, window.innerHeight - r.top + 10) + "px";
+    left = Math.max(margin, Math.min(left, window.innerWidth - bw - margin));
+    top = Math.max(margin, Math.min(top, window.innerHeight - bh - margin));
+
+    bubbleEl.style.left = Math.round(left) + "px";
+    bubbleEl.style.top = Math.round(top) + "px";
+    bubbleEl.style.right = "auto";
+    bubbleEl.style.bottom = "auto";
   }
   function syncSeed() {
     const b = bubbleEl && bubbleEl.querySelector(".rch-seed");
@@ -242,7 +342,11 @@
       try { chrome.storage?.local.set({ rchSeed: seeding }); } catch (_) {}
       runScan();
     };
-    bubbleEl.querySelector(".rch-x").onclick = () => (bubbleEl.style.display = "none");
+    bubbleEl.querySelector(".rch-x").onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideBubble();
+    };
     bubbleEl.querySelector(".rch-rescan").onclick = () => runScan();
     bubbleEl.querySelector(".rch-instr").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runScan(); } });
     bubbleEl.querySelector(".rch-copy").onclick = () => {
@@ -634,8 +738,9 @@
   }
   function runScan() {
     if (!currentCtx || scanInFlight) return;
+    ensureMascot();
     ensureBubble();
-    bubbleEl.dataset.has = "1"; bubbleEl.style.display = "block"; positionBubble();
+    showBubble(); // always dock + show while generating
     const ta = bubbleEl.querySelector(".rch-draft");
     ta.value = ""; ta.placeholder = "Bram đang soạn…"; ta.style.height = "auto";
     const instruction = (bubbleEl.querySelector(".rch-instr").value || "").trim();
@@ -646,9 +751,19 @@
       if (requestId !== scanRequestId) return;
       stopScan();
       setBusy(false);
-      if (!resp || resp.error) { setPose("idle"); ta.placeholder = resp?.error || "không có phản hồi"; return; }
+      // Re-open if user minimized mid-scan — draft still lands in bubble
+      showBubble();
+      if (!resp || resp.error) {
+        setPose("idle");
+        ta.placeholder = resp?.error || "không có phản hồi";
+        positionBubble();
+        return;
+      }
       renderDraft((resp.drafts && resp.drafts[0]) || null);
-      setPose("done"); clearTimeout(idleTimer); idleTimer = setTimeout(() => setPose("idle"), 2600);
+      setPose("done");
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => setPose("idle"), 2600);
+      positionBubble();
     });
   }
   function openPanel(ctx, targetEl) {
@@ -657,12 +772,14 @@
       window.RGL?.automation?.pause?.();
       if (window.RGL?.bus) window.RGL.bus.paused = true;
     } catch (_) {}
-    ensureMascot(); ensureBubble();
+    ensureMascot();
+    ensureBubble();
     currentCtx = ctx;
     currentTargetEl = targetEl || null;
     bubbleEl.querySelector(".rch-instr").value = "";
     fillTarget(ctx.target);
     renderQuote(ctx);
+    showBubble();
     runScan();
   }
 
@@ -846,5 +963,9 @@
     startScan,
     stopScan,
     isAutoModeratorComment,
+    showBubble,
+    hideBubble,
+    toggleBubble,
+    positionBubble,
   };
 })();
