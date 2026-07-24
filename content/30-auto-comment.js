@@ -126,26 +126,39 @@
     return eng;
   }
 
+  function targetText(kind, ctx) {
+    if (kind === "comment") {
+      return [ctx?.replyingTo, ctx?.title, ctx?.body].filter(Boolean).join("\n");
+    }
+    return [ctx?.title, ctx?.body].filter(Boolean).join("\n");
+  }
+
   function scoreTarget(el, kind, ctx) {
     const L = live();
-    const text =
-      kind === "comment"
-        ? ctx?.replyingTo || ""
-        : `${ctx?.title || ""} ${ctx?.body || ""}`;
+    const text = targetText(kind, ctx);
     const words = U().wordCount(text);
     const questions = ctx?.questions || RGL.assist?.extractQuestions?.(text) || [];
     const eng = engagementFromEl(el);
+    const promo = U().detectPromoInvite?.(text) || { invite: false, reasons: [], confidence: 0 };
     let s = 0;
     s += eng * 0.45;
     s += U().clamp(words / 80, 0, 1) * 0.2;
     if (questions.length) s += Math.min(0.5, questions.length * 0.25);
     if (L.preferQ && questions.length) s += 0.1;
+    // OP explicitly invites SaaS/product drops → strong boost + auto-seed
+    if (promo.invite) s += 0.55 + (promo.confidence || 0) * 0.25;
     if (RGL.assist?.isAutoModeratorComment?.(el)) s = -1;
-    if (words < L.minWords && !questions.length) s -= 0.4;
+    if (words < L.minWords && !questions.length && !promo.invite) s -= 0.4;
 
-    const thr = questions.length ? L.minEng * 0.6 : L.minEng;
-    const pass = s >= thr && eng >= thr * 0.85;
-    return { score: s, eng, words, questions, pass, thr };
+    // Promo-invite threads: lower eng gate (they're often new "drop your link" posts)
+    const thr = promo.invite
+      ? Math.min(L.minEng * 0.45, 0.18)
+      : questions.length
+        ? L.minEng * 0.6
+        : L.minEng;
+    const engNeed = promo.invite ? thr * 0.5 : thr * 0.85;
+    const pass = s >= thr && (promo.invite || eng >= engNeed);
+    return { score: s, eng, words, questions, pass, thr, promo };
   }
 
   function threadKey() {
@@ -169,66 +182,93 @@
     }
 
     const L = live();
-    if (!U().chance(L.commentChance)) return null;
-
     const tk = threadKey();
     if (job.touchedThreads.has(tk)) {
       log("already commented this thread");
       return null;
     }
 
-    // Pick target: 70% question-reply, 30% OP
-    const wantReply = Math.random() < 0.7;
+    // Score OP first — promo-invite posts should win even without "?"
+    const post =
+      document.querySelector("shreddit-post") ||
+      document.querySelector(".thing.link") ||
+      document.querySelector("[data-testid='post-container']");
+    let postCtx = null;
+    let postScored = null;
+    if (post && RGL.assist) {
+      postCtx = RGL.assist.postContext(post) || { title: document.title, body: "", questions: [] };
+      postScored = scoreTarget(post, "post", postCtx);
+    }
+    const opPromo = !!postScored?.promo?.invite;
+    if (opPromo) {
+      log("promo invite detected on OP", postScored.promo);
+    } else if (!U().chance(L.commentChance)) {
+      // Normal posts still use chance roll; promo-invite skips the roll (high intent)
+      return null;
+    }
+
     let targetEl = null;
     let kind = "post";
     let ctx = null;
     let scored = null;
 
-    if (wantReply && RGL.assist) {
-      const comments = [
-        ...(document.querySelectorAll("shreddit-comment, .comment") || []),
-      ].filter((c) => {
-        const r = c.getBoundingClientRect();
-        return r.height > 40 && r.bottom > 0 && r.top < window.innerHeight;
-      });
-      const ranked = comments
-        .map((c) => {
-          const cctx = RGL.assist.commentContext(c);
-          const sc = scoreTarget(c, "comment", cctx);
-          return { c, cctx, sc };
-        })
-        .filter((x) => x.sc.pass && x.sc.questions.length > 0)
-        .sort((a, b) => b.sc.score - a.sc.score);
-      if (ranked[0]) {
-        targetEl = ranked[0].c;
-        kind = "comment";
-        ctx = ranked[0].cctx;
-        scored = ranked[0].sc;
-      }
-    }
-
-    if (!targetEl) {
-      const post =
-        document.querySelector("shreddit-post") ||
-        document.querySelector(".thing.link") ||
-        document.querySelector("[data-testid='post-container']");
-      if (!post) return null;
-      ctx = RGL.assist?.postContext?.(post) || { title: document.title, body: "", questions: [] };
-      scored = scoreTarget(post, "post", ctx);
-      if (!scored.pass) {
-        log("OP eng skip", scored);
-        return null;
-      }
+    // Promo invite → prefer OP comment (best place to seed)
+    if (opPromo && post && postScored?.pass) {
       targetEl = post;
       kind = "post";
+      ctx = postCtx;
+      scored = postScored;
+    } else {
+      // 70% reply (questions or promo in comment), 30% OP
+      const wantReply = Math.random() < 0.7;
+      if (wantReply && RGL.assist) {
+        const comments = [
+          ...(document.querySelectorAll("shreddit-comment, .comment") || []),
+        ].filter((c) => {
+          const r = c.getBoundingClientRect();
+          return r.height > 40 && r.bottom > 0 && r.top < window.innerHeight;
+        });
+        const ranked = comments
+          .map((c) => {
+            const cctx = RGL.assist.commentContext(c);
+            const sc = scoreTarget(c, "comment", cctx);
+            return { c, cctx, sc };
+          })
+          .filter((x) => x.sc.pass && (x.sc.questions.length > 0 || x.sc.promo?.invite))
+          .sort((a, b) => b.sc.score - a.sc.score);
+        if (ranked[0]) {
+          targetEl = ranked[0].c;
+          kind = "comment";
+          ctx = ranked[0].cctx;
+          scored = ranked[0].sc;
+        }
+      }
+
+      if (!targetEl) {
+        if (!post) return null;
+        ctx = postCtx || { title: document.title, body: "", questions: [] };
+        scored = postScored || scoreTarget(post, "post", ctx);
+        if (!scored.pass) {
+          log("OP eng skip", scored);
+          return null;
+        }
+        targetEl = post;
+        kind = "post";
+      }
     }
 
-    return runJob({ targetEl, kind, ctx, scored });
+    const forceSeed =
+      !!scored?.promo?.invite ||
+      !!opPromo ||
+      !!U().detectPromoInvite?.(targetText(kind, ctx))?.invite;
+
+    return runJob({ targetEl, kind, ctx, scored, forceSeed });
   }
 
-  async function runJob({ targetEl, kind, ctx, scored }) {
+  async function runJob({ targetEl, kind, ctx, scored, forceSeed = false }) {
     const L = live();
     const u = U();
+    const useSeed = !!(forceSeed || L.seed || scored?.promo?.invite);
     const j = {
       id: `c_${Date.now()}`,
       kind,
@@ -241,6 +281,8 @@
       readySubmitAt: 0,
       error: null,
       scored,
+      forceSeed: useSeed,
+      promo: scored?.promo || null,
     };
     job.active = j;
     RGL.bus.phase = "COMMENTING";
@@ -249,7 +291,11 @@
 
     // Open Bram speech bubble immediately (same window as manual generate)
     try {
-      RGL.assist?.openAutoPanel?.(ctx, targetEl, "DWELL");
+      RGL.assist?.openAutoPanel?.(ctx, targetEl, useSeed ? "DWELL · 🌱 SEED" : "DWELL");
+      if (useSeed) {
+        RGL.assist?.setSeeding?.(true);
+        log("auto seeding ON — promo invite", scored?.promo?.reasons);
+      }
     } catch (e) {
       log("openAutoPanel failed", e);
     }
@@ -258,7 +304,7 @@
       // 1) Dwell — already on post; re-read target
       j.phase = "DWELL";
       RGL.bus.jobPhase = j.phase;
-      RGL.assist?.setAutoPhase?.("DWELL");
+      RGL.assist?.setAutoPhase?.(useSeed ? "DWELL · 🌱" : "DWELL");
       RGL.assist?.setPose?.("reading");
       const count =
         kind === "comment"
@@ -271,17 +317,23 @@
       // 2) Generate — bubble stays open with "soạn…"
       j.phase = "GENERATING";
       RGL.bus.jobPhase = j.phase;
-      RGL.assist?.setAutoPhase?.("GENERATING");
       RGL.assist?.setPose?.("writing");
       RGL.assist?.startScan?.();
       RGL.assist?.showBubble?.();
 
-      const style = L.seed ? "soft_mention" : "value_only";
+      // Promo-invite → force soft_mention even if global seed toggle is off
+      const style = useSeed ? "soft_mention" : "value_only";
+      const seedHint = useSeed
+        ? " OP invited people to drop/share their SaaS or product in comments — soft mention of the product is appropriate with honest value + brief disclose."
+        : "";
       const genCtx = {
         ...ctx,
         style,
-        instruction: kind === "comment" ? "reply naturally to this comment" : "",
+        instruction:
+          (kind === "comment" ? "reply naturally to this comment." : "comment helpfully on the post.") +
+          seedHint,
       };
+      RGL.assist?.setAutoPhase?.(useSeed ? "GENERATING · 🌱" : "GENERATING");
       const resp = await RGL.assist?.generateAsync?.(genCtx, L.model);
       RGL.assist?.stopScan?.();
 

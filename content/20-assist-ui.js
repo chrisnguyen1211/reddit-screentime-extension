@@ -301,6 +301,11 @@
     if (b) b.classList.toggle("on", seeding);
     if (bubbleEl && currentCtx) fillTarget(currentCtx.target);
   }
+  function setSeeding(on) {
+    seeding = !!on;
+    syncSeed();
+    // do not force-persist auto-on to storage unless user toggles; visual + generate style only
+  }
   function setPose(pose) {
     ensureMascot();
     const s = mascotEl.querySelector("svg");
@@ -1252,6 +1257,15 @@
     ensureBubble();
     currentCtx = ctx;
     currentTargetEl = targetEl || null;
+    // Auto-seed when OP/comment invites promo (Drop your SaaS…)
+    try {
+      const blob = [ctx?.title, ctx?.body, ctx?.replyingTo].filter(Boolean).join("\n");
+      const promo = window.RGL?.util?.detectPromoInvite?.(blob);
+      if (promo?.invite) {
+        setSeeding(true);
+        console.log("[RGL] promo invite → seeding ON", promo.reasons);
+      }
+    } catch (_) {}
     bubbleEl.querySelector(".rch-instr").value = "";
     fillTarget(ctx.target);
     renderQuote(ctx);
@@ -1446,6 +1460,7 @@
     openAutoPanel,
     setDraftFromAuto,
     setAutoPhase,
+    setSeeding,
     renderDraft,
   };
 })();

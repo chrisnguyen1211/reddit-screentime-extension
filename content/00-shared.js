@@ -108,6 +108,62 @@
       .filter(Boolean).length;
   }
 
+  /**
+   * Detect "promo welcome" posts/comments — OP invites people to drop SaaS/product/link.
+   * When true, auto-comment should force soft_mention / seeding.
+   */
+  function detectPromoInvite(text) {
+    const t = String(text || "").toLowerCase().replace(/\s+/g, " ");
+    if (t.length < 12) return { invite: false, reasons: [] };
+
+    const patterns = [
+      /drop your (saas|product|startup|tool|app|link|url|project|website|site)/i,
+      /drop .{0,24}(saas|product|startup|tool|app) .{0,40}comment/i,
+      /share your (saas|product|startup|tool|app|link)/i,
+      /pitch your (saas|product|startup|idea|tool)/i,
+      /plug your (saas|product|startup|tool|app)/i,
+      /promote your (saas|product|startup|tool|app)/i,
+      /self[-\s]?promo(tion)? (allowed|welcome|ok|encouraged|saturday|sunday|thread)/i,
+      /shameless plug/i,
+      /feel free to (promote|plug|share|drop)/i,
+      /what('?s| is) your (saas|product|startup|tool)/i,
+      /show me your (saas|product|startup|tool|app)/i,
+      /list (it|them|you) on .{0,40}(board|directory|launch)/i,
+      /launch board/i,
+      /honest feedback/i,
+      /i will (give|provide) you .{0,30}feedback/i,
+      /i('?ll| will) (review|check out|try|test) your/i,
+      /in the comments? .{0,40}(feedback|review|list|feature)/i,
+      /comment .{0,30}(your|with) (saas|product|link|url|startup)/i,
+      /post your (saas|product|link|startup|tool)/i,
+      /tell (me|us) about your (saas|product|startup|tool)/i,
+      // VN-ish
+      /drop (link|sản phẩm|product|saas)/i,
+      /giới thiệu (sản phẩm|tool|app|saas)/i,
+      /promote (thoải mái|được|ok)/i,
+    ];
+
+    const reasons = [];
+    for (const re of patterns) {
+      if (re.test(t)) reasons.push(re.source.slice(0, 48));
+    }
+
+    // Combo heuristic: "comments" + (feedback|review) + (free|honest|saas|product)
+    if (
+      /comment/i.test(t) &&
+      /(feedback|review|critique)/i.test(t) &&
+      /(saas|product|startup|tool|free|honest)/i.test(t)
+    ) {
+      reasons.push("combo:comment+feedback+product");
+    }
+
+    return {
+      invite: reasons.length > 0,
+      reasons,
+      confidence: Math.min(1, reasons.length * 0.34),
+    };
+  }
+
   RGL.util = {
     rand,
     randInt,
@@ -122,6 +178,7 @@
     estimateTypingMs,
     estimateThinkMs,
     wordCount,
+    detectPromoInvite,
   };
 
   // Master runtime bus

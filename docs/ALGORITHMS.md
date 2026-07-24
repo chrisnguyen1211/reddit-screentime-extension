@@ -282,6 +282,21 @@ page:
   phải là /comments/...  (đã vào post)
 ```
 
+### 5.1b Promo-invite → auto seeding
+
+Nếu title/body/comment khớp mẫu mời promote (vd. *“Drop your SaaS in the comments…”*, *launch board*, *honest feedback*, *self-promo welcome*…):
+
+| Hành vi | Chi tiết |
+|---------|----------|
+| Detect | `detectPromoInvite(text)` — regex + combo comment+feedback+product |
+| Score | +0.55… boost; eng gate nới |
+| Intent | **Bỏ qua** roll chance% (ưu tiên comment) |
+| Target | Ưu tiên **OP** (không random reply) |
+| Style | Force `soft_mention` / seeding **kể cả** toggle 🌱 global đang tắt |
+| UI | Bubble hiện `🌱 SEED` |
+
+Manual ✨ trên post promo cũng auto bật 🌱.
+
 ### 5.2 Chọn target (70% reply / 30% OP)
 
 **Scoring:**
