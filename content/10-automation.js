@@ -966,57 +966,38 @@
     }
   }
 
-  // ─── Overlay ─────────────────────────────────────────────────────
-  let overlayEl = null;
-  function ensureOverlay() {
-    if (overlayEl) return overlayEl;
-    overlayEl = document.createElement("div");
-    overlayEl.id = "rss-screentime-overlay";
-    Object.assign(overlayEl.style, {
-      position: "fixed",
-      bottom: "16px",
-      right: "16px",
-      zIndex: "2147483647",
-      background: "rgba(0,0,0,0.8)",
-      color: "#fff",
-      font: "11px/1.35 system-ui, -apple-system, sans-serif",
-      padding: "8px 11px",
-      borderRadius: "10px",
-      boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-      pointerEvents: "none",
-      opacity: "0",
-      transition: "opacity 0.25s",
-      maxWidth: "260px",
-      whiteSpace: "pre-line",
-    });
-    document.documentElement.appendChild(overlayEl);
-    return overlayEl;
+  // ─── Status toast → Claude overlay only (no legacy #rss-screentime-overlay)
+  // Removes conflict with #rgl-overlay-root bottom-right panel.
+  function removeLegacyOverlay() {
+    try {
+      document.getElementById("rss-screentime-overlay")?.remove();
+    } catch (_) {}
   }
 
   function flashStatus(text) {
-    const el = ensureOverlay();
-    el.textContent = `🟠 ${text}`;
-    el.style.opacity = "1";
-    clearTimeout(flashStatus._t);
-    flashStatus._t = setTimeout(() => {
-      if (STATE.enabled) updateLiveStatus();
-      else el.style.opacity = "0";
-    }, 2000);
+    removeLegacyOverlay();
+    // Prefer RGL Claude overlay status line; never create second fixed panel
+    if (window.RGL?.bus) {
+      window.RGL.bus.lastFlash = String(text || "");
+      window.RGL.bus.lastFlashAt = Date.now();
+    }
+    // Ask orchestrator overlay to refresh if present
+    try {
+      window.RGL?.orchestrator?.updateOverlay?.();
+    } catch (_) {}
+    log("status", text);
   }
 
   function updateLiveStatus() {
-    if (!STATE.enabled) return;
-    const el = ensureOverlay();
-    const s = STATE.stats;
-    const nextIn =
-      STATE.dynamicConfig && STATE.nextDriftAt
-        ? Math.max(0, Math.round((STATE.nextDriftAt - Date.now()) / 1000))
-        : null;
-    const driftLine = STATE.dynamicConfig
-      ? `🎲#${STATE.driftCount} next ${nextIn}s · spd ${STATE.scrollSpeed.toFixed(1)} ⬆${Math.round(STATE.upvoteChance)}% open ${Math.round(STATE.openPostChance)}%`
-      : `cfg fixed · spd ${STATE.scrollSpeed.toFixed(1)}`;
-    el.textContent = `🟠 ${STATE.mode} · 📜${s.scrolls} ⬆${s.upvotes} 💬${s.commentUpvotes} ↗${s.opens}\nenergy ${(STATE.rhythm.energy * 100) | 0}% · ~${s.charsRead} chars\n${driftLine}`;
-    el.style.opacity = "0.88";
+    removeLegacyOverlay();
+    if (window.RGL?.bus) {
+      window.RGL.bus.stats = { ...window.RGL.bus.stats, ...STATE.stats };
+      window.RGL.bus.energy = STATE.rhythm.energy;
+      window.RGL.bus.live = liveConfigSnapshot();
+    }
+    try {
+      window.RGL?.orchestrator?.updateOverlay?.();
+    } catch (_) {}
   }
 
   // ─── Main loops ──────────────────────────────────────────────────
@@ -1102,13 +1083,8 @@
       clearTimeout(STATE.timer);
       STATE.timer = null;
     }
-    if (overlayEl) {
-      overlayEl.textContent = "🟠 OFF";
-      overlayEl.style.opacity = "1";
-      setTimeout(() => {
-        if (overlayEl) overlayEl.style.opacity = "0";
-      }, 1400);
-    }
+    removeLegacyOverlay();
+    flashStatus("OFF");
     log("Stopped", STATE.stats);
   }
 

@@ -13,9 +13,9 @@
   .rch-trigger, .rch-trigger__edge { transition: none !important; }
 }
 
-/* ── Bram mascot, fixed in the corner ── */
+/* ── Bram mascot: bottom-LEFT so it does not cover RGL overlay (bottom-right) ── */
 .rch-mascot {
-  position: fixed; right: 14px; bottom: 90px; z-index: 2147483646;
+  position: fixed; left: 14px; right: auto; bottom: 16px; z-index: 2147483001;
   width: 92px; height: 116px; cursor: grab; touch-action: none;
   filter: drop-shadow(0 7px 16px rgba(0,0,0,.45));
   transition: filter .2s ease;
@@ -27,7 +27,8 @@
 
 /* ── speech bubble (pops from Bram's head) ── */
 .rch-bubble {
-  position: fixed; right: 14px; bottom: 222px; z-index: 2147483647;
+  /* default sits above mascot on the left; JS positionBubble() overrides when mascot moves */
+  position: fixed; left: 14px; right: auto; bottom: 130px; z-index: 2147483002;
   width: 360px; max-width: calc(100vw - 28px);
   background: #1b1b1f; color: #e8e6e3; border: 1px solid #3a2a20; border-radius: 16px;
   box-shadow: 0 16px 44px rgba(0,0,0,.55); padding: 14px 14px 12px;

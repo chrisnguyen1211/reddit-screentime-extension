@@ -340,7 +340,15 @@
       ok === null ? "9router —" : ok ? "9router ok" : "9router down";
     root.querySelector(".rgl-model").textContent =
       (h.model || health.model || "—").toString().split("/").pop();
-    root.querySelector(".rgl-status").textContent = statusSentence({ ...data, phase });
+
+    // Prefer short-lived flash from automation over generic sentence
+    const flash = window.RGL?.bus?.lastFlash;
+    const flashAge = Date.now() - (window.RGL?.bus?.lastFlashAt || 0);
+    if (flash && flashAge < 3500) {
+      root.querySelector(".rgl-status").textContent = flash;
+    } else {
+      root.querySelector(".rgl-status").textContent = statusSentence({ ...data, phase });
+    }
 
     applyCollapse();
     maybeHealth();

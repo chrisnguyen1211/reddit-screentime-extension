@@ -144,7 +144,22 @@
     mascotEl.innerHTML = bramSvg("idle", 92);
     mascotEl.querySelector(".m-face").innerHTML = bramFace("happy");
     document.body.appendChild(mascotEl);
-    try { chrome.storage?.local.get(["rchPos"], (r) => { if (r && r.rchPos) { mascotEl.style.left = r.rchPos.left + "px"; mascotEl.style.top = r.rchPos.top + "px"; mascotEl.style.right = "auto"; mascotEl.style.bottom = "auto"; if (bubbleEl && bubbleEl.style.display !== "none") positionBubble(); } }); } catch (_) {}
+    try {
+      chrome.storage?.local.get(["rchPos"], (r) => {
+        // Prefer bottom-left default so mascot doesn't sit on Claude overlay (bottom-right).
+        // Only restore saved pos if it was on the left half of the screen.
+        if (r && r.rchPos && Number(r.rchPos.left) < window.innerWidth * 0.45) {
+          mascotEl.style.left = r.rchPos.left + "px";
+          mascotEl.style.top = r.rchPos.top + "px";
+          mascotEl.style.right = "auto";
+          mascotEl.style.bottom = "auto";
+        } else if (r && r.rchPos) {
+          // Clear old bottom-right saves that conflicted with overlay
+          try { chrome.storage.local.remove("rchPos"); } catch (_) {}
+        }
+        if (bubbleEl && bubbleEl.style.display !== "none") positionBubble();
+      });
+    } catch (_) {}
     // drag to move (the bubble follows); a plain click toggles the bubble
     mascotEl.addEventListener("pointerdown", (e) => { dragStart = { x: e.clientX, y: e.clientY, rect: mascotEl.getBoundingClientRect() }; dragging = false; try { mascotEl.setPointerCapture(e.pointerId); } catch (_) {} });
     mascotEl.addEventListener("pointermove", (e) => {
@@ -168,8 +183,17 @@
   function positionBubble() {
     if (!bubbleEl || !mascotEl) return;
     const r = mascotEl.getBoundingClientRect();
-    bubbleEl.style.left = "auto"; bubbleEl.style.top = "auto";
-    bubbleEl.style.right = Math.max(8, window.innerWidth - r.right + 4) + "px";
+    // Keep bubble above mascot; prefer left side (mascot default is bottom-left)
+    // so it never covers #rgl-overlay-root (bottom-right Claude panel).
+    bubbleEl.style.top = "auto";
+    const spaceRight = window.innerWidth - r.right;
+    if (r.left < window.innerWidth / 2) {
+      bubbleEl.style.left = Math.max(8, r.left) + "px";
+      bubbleEl.style.right = "auto";
+    } else {
+      bubbleEl.style.left = "auto";
+      bubbleEl.style.right = Math.max(8, spaceRight) + "px";
+    }
     bubbleEl.style.bottom = Math.max(8, window.innerHeight - r.top + 10) + "px";
   }
   function syncSeed() {

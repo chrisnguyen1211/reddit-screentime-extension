@@ -25,6 +25,7 @@
   }
 }
 
+/* Sole status chrome — bottom-right. Bram lives bottom-left (see content.css). */
 #rgl-overlay-root {
   all: initial;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -34,6 +35,14 @@
   bottom: 16px;
   z-index: 2147483000;
   pointer-events: none;
+}
+
+/* Hide any legacy toast if an old script injects it */
+#rss-screentime-overlay {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 #rgl-overlay-root * {

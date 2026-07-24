@@ -290,6 +290,11 @@
   setTimeout(syncFromStorage, 600);
   setInterval(updateOverlay, 1500);
 
+  // Kill any leftover legacy toast from older builds (same corner as Claude UI)
+  try {
+    document.getElementById("rss-screentime-overlay")?.remove();
+  } catch (_) {}
+
   RGL.orchestrator = { start, stop, updateOverlay };
   log("orchestrator ready");
 })();
