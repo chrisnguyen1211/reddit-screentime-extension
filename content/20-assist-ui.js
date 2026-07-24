@@ -357,23 +357,34 @@
     bubbleEl.querySelector(".rch-fill").onclick = async () => {
       const ta = bubbleEl.querySelector(".rch-draft");
       const fill = bubbleEl.querySelector(".rch-fill");
+      const draft = (ta.value || "").trim();
+      if (!draft) {
+        flash(fill, "Draft trống");
+        return;
+      }
       fill.disabled = true;
       let handedOffToPost = false;
-      const filled = await fillComposerForTarget(ta.value, currentTargetEl, {
-        targetKind: currentCtx?.target?.kind,
+      const kind = currentCtx?.target?.kind || "post";
+      const filled = await fillComposerForTarget(draft, currentTargetEl, {
+        targetKind: kind,
+        preferGlobal: kind === "post" || !currentTargetEl,
+        allowControl: true,
         beforeOpen: (control) => {
-          if (currentCtx?.target?.kind !== "post") return;
-          handedOffToPost = !!savePendingFill(ta.value, currentTargetEl, control, currentCtx);
+          if (kind !== "post") return;
+          handedOffToPost = !!savePendingFill(draft, currentTargetEl, control, currentCtx);
         },
       });
       if (filled) {
         clearPendingFill();
         flash(fill, "✓ Đã điền");
+        showFillNotice("✓ Đã điền vào ô comment Reddit");
       } else if (handedOffToPost) {
         flash(fill, "Đang mở comment…");
       } else {
-        navigator.clipboard?.writeText(ta.value).catch(() => {});
-        flash(fill, "không thấy đúng ô (đã copy)");
+        try {
+          await navigator.clipboard?.writeText(draft);
+        } catch (_) {}
+        flash(fill, "fail — đã copy");
       }
       fill.disabled = false;
     };
@@ -524,22 +535,64 @@
   }
 
   // ── fill Reddit's reply composer ───────────────────────────────────────────
-  const isEditable = (el) => el && el !== bubbleEl?.querySelector(".rch-draft") && el !== bubbleEl?.querySelector(".rch-instr") &&
-    (el.tagName === "TEXTAREA" || el.isContentEditable || el.getAttribute?.("role") === "textbox");
-  const vis = (el) => { const r = el && el.getBoundingClientRect?.(); return !!(r && r.width > 4 && r.height > 4); };
+  const isOurUi = (el) =>
+    !!(el && (targetContains(bubbleEl, el) || targetContains(mascotEl, el) || el.closest?.("#rgl-overlay-root,.rch-bubble,.rch-mascot")));
+  const isEditable = (el) =>
+    el &&
+    !isOurUi(el) &&
+    (el.tagName === "TEXTAREA" ||
+      el.tagName === "INPUT" ||
+      el.isContentEditable ||
+      el.getAttribute?.("contenteditable") === "true" ||
+      el.getAttribute?.("role") === "textbox" ||
+      el.tagName === "FACEPLATE-TEXTAREA" ||
+      el.getAttribute?.("aria-multiline") === "true");
+  const vis = (el) => {
+    const r = el && el.getBoundingClientRect?.();
+    return !!(r && r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < (window.innerHeight || 800) + 40);
+  };
   function deepActiveElement(root = document) {
     let active = root.activeElement || document.activeElement;
     while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
     return active;
   }
+  /** Deep walk open shadow roots for any editable-looking control. */
   function editableInRoot(root) {
     if (!root) return [];
     const out = [];
-    const add = (el) => { if (isEditable(el) && vis(el) && !el.disabled && !el.readOnly) out.push(el); };
-    if (root.nodeType === Node.ELEMENT_NODE) add(root);
-    root.querySelectorAll?.('textarea,[contenteditable="true"],[role="textbox"]').forEach(add);
-    root.querySelectorAll?.("*").forEach((el) => { if (el.shadowRoot) out.push(...editableInRoot(el.shadowRoot)); });
+    const seen = new Set();
+    const add = (el) => {
+      if (!el || seen.has(el)) return;
+      if (isEditable(el) && vis(el) && !el.disabled && !el.readOnly) {
+        seen.add(el);
+        out.push(el);
+      }
+    };
+    const walk = (node) => {
+      if (!node || seen.has(node)) return;
+      if (node.nodeType === Node.ELEMENT_NODE) add(node);
+      try {
+        node.querySelectorAll?.(
+          'textarea,input,[contenteditable="true"],[contenteditable=""],[role="textbox"],faceplate-textarea,[aria-multiline="true"]'
+        ).forEach(add);
+      } catch (_) {}
+      try {
+        node.querySelectorAll?.("*").forEach((el) => {
+          if (el.shadowRoot) walk(el.shadowRoot);
+        });
+      } catch (_) {}
+    };
+    walk(root);
     return out;
+  }
+
+  function allPageEditables() {
+    return [
+      ...editableInRoot(document),
+      ...[...document.querySelectorAll("shreddit-composer, shreddit-comment-composer, faceplate-textarea, comment-composer-host")].flatMap(
+        (h) => editableInRoot(h)
+      ),
+    ];
   }
   function targetContains(target, el) {
     if (!target || !el) return false;
@@ -574,20 +627,28 @@
     return pickNearestComposer(target, candidates);
   }
   function postPageComposer() {
-    const roots = [...document.querySelectorAll(
-      "shreddit-composer,[data-testid='comment-submission-form'],[data-testid='comment-composer'],comment-composer-host"
-    )];
+    const roots = [
+      ...document.querySelectorAll(
+        "shreddit-composer,shreddit-comment-composer,[data-testid='comment-submission-form'],[data-testid='comment-composer'],comment-composer-host,faceplate-textarea"
+      ),
+    ];
     const scoped = roots.flatMap((root) => editableInRoot(root)).filter(vis);
     if (scoped.length) return scoped[0];
-    const all = [...new Set(editableInRoot(document))].filter((el) => !targetContains(bubbleEl, el));
-    const marked = all.filter((el) => /comment|thought|reply/i.test(
-      el.getAttribute?.("aria-label") || el.getAttribute?.("placeholder") || ""
-    ));
-    if (marked.length === 1) return marked[0];
-    return all.length === 1 ? all[0] : null;
+    const all = allPageEditables().filter((el) => !isOurUi(el));
+    const marked = all.filter((el) =>
+      /comment|thought|reply|bình luận|trả lời/i.test(
+        el.getAttribute?.("aria-label") || el.getAttribute?.("placeholder") || el.getAttribute?.("name") || ""
+      )
+    );
+    if (marked.length) return marked[0];
+    // largest visible textbox near bottom of post (main comment box)
+    if (all.length) {
+      return all.sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+    }
+    return null;
   }
   function replyControl(target, targetKind = currentCtx?.target?.kind) {
-    const a = actionAnchor(target, targetKind === "post" ? /comment|reply/i : /reply/i);
+    const a = actionAnchor(target, targetKind === "post" ? /comment|reply|bình luận/i : /reply|trả lời/i);
     if (!a?.after || a.after.classList?.contains("rch-trigger")) return null;
     return a.after.matches?.("button,a,faceplate-tracker") ? a.after : a.after.querySelector?.("button,a,faceplate-tracker");
   }
@@ -595,34 +656,66 @@
     if (target && target.isConnected === false) return null;
     const active = deepActiveElement();
     const containsTarget = targetKind === "comment" ? ownTargetContains : targetContains;
-    if (isEditable(active) && vis(active) && (!target || containsTarget(target, active))) return active;
+    if (isEditable(active) && vis(active) && !isOurUi(active) && (!target || containsTarget(target, active) || preferGlobal)) {
+      return active;
+    }
     const scoped = target
       ? editableInRoot(target).find((el) => vis(el) && (targetKind !== "comment" || ownTargetContains(target, el)))
       : null;
     if (scoped) return scoped;
+
+    // parent shreddit hosts
+    if (target) {
+      const host =
+        target.closest?.("shreddit-comment, shreddit-post, .thing, .Comment, article") || target;
+      const inHost = editableInRoot(host);
+      if (inHost[0]) return inHost[0];
+    }
+
     if (preferGlobal) {
       const global = postPageComposer();
       if (global) return global;
     }
     const control = allowControl && target && replyControl(target, targetKind);
     if (control) {
-      const beforeEditors = new Set(editableInRoot(document));
-      try { beforeOpen?.(control); } catch (_) {}
-      try { control.click(); } catch (_) {}
-      for (let i = 0; i < 10; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        const scopedOpened = editableInRoot(target).find((el) =>
-          vis(el) && (targetKind !== "comment" || ownTargetContains(target, el))
-        );
+      const beforeEditors = new Set(allPageEditables());
+      try {
+        beforeOpen?.(control);
+      } catch (_) {}
+      try {
+        control.click();
+      } catch (_) {}
+      for (let i = 0; i < 16; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 140));
         const activeOpened = deepActiveElement();
-        const freshEditors = editableInRoot(document).filter((el) => !beforeEditors.has(el));
-        const opened = scopedOpened ||
-          (isEditable(activeOpened) && vis(activeOpened) && freshEditors.includes(activeOpened) ? activeOpened : null) ||
-          pickNearestComposer(target, freshEditors);
+        if (isEditable(activeOpened) && vis(activeOpened) && !isOurUi(activeOpened)) return activeOpened;
+        const scopedOpened = target
+          ? editableInRoot(target).find(
+              (el) => vis(el) && (targetKind !== "comment" || ownTargetContains(target, el))
+            )
+          : null;
+        if (scopedOpened) return scopedOpened;
+        const freshEditors = allPageEditables().filter((el) => !beforeEditors.has(el));
+        const opened = pickNearestComposer(target, freshEditors);
         if (opened) return opened;
+        const any = postPageComposer();
+        if (any && preferGlobal) return any;
       }
     }
-    return preferGlobal ? postPageComposer() : null;
+    // last resort: focused editable after clicking any composer host
+    for (const host of document.querySelectorAll(
+      "shreddit-composer, shreddit-comment-composer, faceplate-textarea, [data-testid='comment-submission-form']"
+    )) {
+      try {
+        host.click();
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 120));
+      const a2 = deepActiveElement();
+      if (isEditable(a2) && !isOurUi(a2)) return a2;
+      const eds = editableInRoot(host);
+      if (eds[0]) return eds[0];
+    }
+    return preferGlobal ? postPageComposer() : postPageComposer() || null;
   }
   function readEditorText(el) {
     if (!el) return "";
@@ -657,20 +750,72 @@
     } catch (_) {}
   }
 
+  async function fillNativeInput(el, text) {
+    el.focus();
+    const proto =
+      el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, text);
+    else el.value = text;
+    // React-style tracker
+    try {
+      const tracker = el._valueTracker;
+      if (tracker) tracker.setValue("");
+    } catch (_) {}
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    return editorLooksFilled(el, text);
+  }
+
+  /** Best path for Lexical/shreddit: clipboard write + paste into focused editor. */
+  async function fillViaSystemClipboard(el, text) {
+    try {
+      el.focus();
+      selectAllIn(el);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        // execCommand paste (works when document focused + permission)
+        const pasted = document.execCommand("paste");
+        if (editorLooksFilled(el, text)) return true;
+        if (!pasted) {
+          const dt = new DataTransfer();
+          dt.setData("text/plain", text);
+          el.dispatchEvent(
+            new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt })
+          );
+        }
+      } else {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", text);
+        el.dispatchEvent(
+          new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt })
+        );
+      }
+    } catch (e) {
+      console.warn("[RGL] clipboard fill failed", e);
+    }
+    return editorLooksFilled(el, text);
+  }
+
   async function fillContentEditable(el, text) {
     el.focus();
-    await new Promise((r) => setTimeout(r, 40));
-    selectAllIn(el);
+    await new Promise((r) => setTimeout(r, 60));
 
-    // Strategy 1: execCommand insertText (Lexical often listens)
+    // Strategy 0: real clipboard paste (most reliable on Lexical)
+    if (await fillViaSystemClipboard(el, text)) return true;
+
+    // Strategy 1: execCommand insertText
     try {
+      el.focus();
+      selectAllIn(el);
       document.execCommand("selectAll", false, null);
       document.execCommand("delete", false, null);
       document.execCommand("insertText", false, text);
     } catch (_) {}
     if (editorLooksFilled(el, text)) return true;
 
-    // Strategy 2: beforeinput + input events
+    // Strategy 2: beforeinput insertFromPaste + insertText
     try {
       selectAllIn(el);
       el.dispatchEvent(
@@ -693,28 +838,35 @@
     } catch (_) {}
     if (editorLooksFilled(el, text)) return true;
 
-    // Strategy 3: ClipboardEvent paste (many React editors honor this)
+    // Strategy 3: per-chunk insertText (Lexical sometimes drops bulk insert)
+    try {
+      el.focus();
+      selectAllIn(el);
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+      const chunk = 24;
+      for (let i = 0; i < text.length; i += chunk) {
+        document.execCommand("insertText", false, text.slice(i, i + chunk));
+        await new Promise((r) => setTimeout(r, 8));
+      }
+    } catch (_) {}
+    if (editorLooksFilled(el, text)) return true;
+
+    // Strategy 4: synthetic paste event only
     try {
       el.focus();
       selectAllIn(el);
       const dt = new DataTransfer();
       dt.setData("text/plain", text);
-      const paste = new ClipboardEvent("paste", {
-        bubbles: true,
-        cancelable: true,
-        clipboardData: dt,
-      });
-      el.dispatchEvent(paste);
-      // fallback if paste prevented but no insert
-      if (!editorLooksFilled(el, text)) {
-        document.execCommand("insertText", false, text);
-      }
+      el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+      document.execCommand("insertText", false, text);
     } catch (_) {}
     if (editorLooksFilled(el, text)) return true;
 
-    // Strategy 4: last resort DOM write + input (may still fail Lexical state)
+    // Strategy 5: last resort DOM (often looks filled but Reddit state empty — still try)
     try {
       el.focus();
+      el.innerHTML = "";
       el.textContent = text;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -722,52 +874,50 @@
     return editorLooksFilled(el, text);
   }
 
-  async function fillNativeInput(el, text) {
-    el.focus();
-    const proto =
-      el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-    if (setter) setter.call(el, text);
-    else el.value = text;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
-    return editorLooksFilled(el, text);
-  }
-
   /** Click common “Add a comment” shells so shreddit composer mounts the editor. */
   async function nudgeOpenComposer(targetKind) {
-    const needles = [
+    const hosts = [
       ...document.querySelectorAll(
-        "shreddit-composer, [data-testid='comment-submission-form'], [data-test-id='comment-submission-form']"
+        "shreddit-composer, shreddit-comment-composer, [data-testid='comment-submission-form'], [data-test-id='comment-submission-form'], faceplate-textarea"
       ),
     ];
-    for (const root of needles) {
-      const clickables = [
-        root,
+    for (const root of hosts) {
+      try {
+        root.click?.();
+      } catch (_) {}
+      // click inner placeholders
+      const kids = [
         ...editableInRoot(root),
-        ...[...(root.querySelectorAll?.("button, [role='textbox'], faceplate-textarea, div") || [])],
+        ...[...(root.querySelectorAll?.("button, [role='textbox'], [contenteditable], div, span") || [])].slice(0, 20),
       ];
-      for (const c of clickables.slice(0, 12)) {
-        const t = clean(c.getAttribute?.("placeholder") || c.getAttribute?.("aria-label") || c.textContent || "");
-        if (/add a comment|what are your thoughts|join the conversation|viết bình luận|comment/i.test(t) || c === root) {
+      for (const c of kids) {
+        const t = clean(
+          c.getAttribute?.("placeholder") || c.getAttribute?.("aria-label") || c.textContent || ""
+        ).slice(0, 80);
+        if (
+          /add a comment|what are your thoughts|join the conversation|viết bình luận|comment|reply|thoughts/i.test(
+            t
+          )
+        ) {
           try {
             c.click?.();
           } catch (_) {}
-          await new Promise((r) => setTimeout(r, 150));
-          break;
         }
       }
+      await new Promise((r) => setTimeout(r, 180));
+      const a = deepActiveElement();
+      if (isEditable(a) && !isOurUi(a)) return;
     }
-    // top-level comment box often needs a click on the empty composer row
-    if (targetKind === "post") {
+    if (targetKind === "post" || !targetKind) {
       const box =
         document.querySelector("shreddit-composer") ||
+        document.querySelector("shreddit-comment-composer") ||
         document.querySelector("[data-testid='comment-submission-form']");
       try {
+        box?.scrollIntoView?.({ block: "center" });
         box?.click?.();
       } catch (_) {}
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 250));
     }
   }
 
@@ -777,21 +927,50 @@
    */
   async function fillComposerForTarget(text, target, options = {}) {
     const want = String(text || "").trim();
-    if (!want) return false;
-
-    await nudgeOpenComposer(options.targetKind || currentCtx?.target?.kind);
-
-    let el = await findComposerForTarget(target, options);
-    if (!el) {
-      // one more attempt after nudge
-      await new Promise((r) => setTimeout(r, 300));
-      el = await findComposerForTarget(target, { ...options, preferGlobal: true });
+    if (!want) {
+      console.warn("[RGL] fillComposer: empty draft text");
+      return false;
     }
-    if (!el) return false;
 
-    el.scrollIntoView?.({ block: "center", behavior: "smooth" });
-    await new Promise((r) => setTimeout(r, 120));
-    el.focus();
+    const kind = options.targetKind || currentCtx?.target?.kind || "post";
+    await nudgeOpenComposer(kind);
+
+    let el = await findComposerForTarget(target, { ...options, preferGlobal: options.preferGlobal ?? kind === "post" });
+    if (!el) {
+      await new Promise((r) => setTimeout(r, 350));
+      el = await findComposerForTarget(target, { ...options, preferGlobal: true, allowControl: true });
+    }
+    // Absolute last: any focused/page editable
+    if (!el) {
+      const a = deepActiveElement();
+      if (isEditable(a) && !isOurUi(a)) el = a;
+      else el = postPageComposer();
+    }
+    if (!el) {
+      console.warn("[RGL] fillComposer: no editor found", { kind, preferGlobal: options.preferGlobal });
+      showFillNotice("Không tìm thấy ô comment — bấm vào ô Reddit rồi Fill lại");
+      return false;
+    }
+
+    // If we got a host custom element, dig for inner editable
+    if (el.tagName && /COMPOSER|TEXTAREA|FACEPLATE/i.test(el.tagName) && !el.isContentEditable && el.tagName !== "TEXTAREA") {
+      const inner = editableInRoot(el)[0];
+      if (inner) el = inner;
+    }
+
+    try {
+      el.scrollIntoView?.({ block: "center", behavior: "instant" in document.documentElement ? "instant" : "auto" });
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 150));
+    try {
+      el.click?.();
+    } catch (_) {}
+    el.focus?.();
+    await new Promise((r) => setTimeout(r, 80));
+
+    // Prefer whatever is actually focused after click (closed shadow cases)
+    const focused = deepActiveElement();
+    if (isEditable(focused) && !isOurUi(focused)) el = focused;
 
     let ok = false;
     if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
@@ -800,23 +979,37 @@
       ok = await fillContentEditable(el, want);
     }
 
-    // Retry once if still empty
+    // Retry with page-level composer
     if (!ok) {
-      await new Promise((r) => setTimeout(r, 200));
-      el = (await findComposerForTarget(target, { ...options, preferGlobal: true })) || el;
-      el.focus();
+      await new Promise((r) => setTimeout(r, 250));
+      await nudgeOpenComposer(kind);
+      el = (await findComposerForTarget(target, { ...options, preferGlobal: true })) || postPageComposer() || el;
+      const f2 = deepActiveElement();
+      if (isEditable(f2) && !isOurUi(f2)) el = f2;
+      el.focus?.();
       if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") ok = await fillNativeInput(el, want);
       else ok = await fillContentEditable(el, want);
     }
 
-    await new Promise((r) => setTimeout(r, 80));
-    const finalOk = editorLooksFilled(el, want);
+    await new Promise((r) => setTimeout(r, 100));
+    // Re-read active element — Lexical may swap node
+    const f3 = deepActiveElement();
+    const checkEl = isEditable(f3) && !isOurUi(f3) ? f3 : el;
+    const finalOk = editorLooksFilled(checkEl, want) || editorLooksFilled(el, want);
     if (!finalOk) {
       console.warn("[RGL] fillComposer: editor still empty after strategies", {
-        tag: el.tagName,
-        role: el.getAttribute("role"),
+        tag: el?.tagName,
+        role: el?.getAttribute?.("role"),
+        ce: el?.isContentEditable,
         sample: readEditorText(el).slice(0, 40),
+        active: f3?.tagName,
       });
+      showFillNotice("Fill thất bại — draft đã copy, dán ⌘V vào ô comment");
+      try {
+        await navigator.clipboard?.writeText(want);
+      } catch (_) {}
+    } else {
+      console.log("[RGL] fillComposer OK", readEditorText(checkEl).slice(0, 80));
     }
     return finalOk;
   }
