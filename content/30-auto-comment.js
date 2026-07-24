@@ -247,10 +247,19 @@
     RGL.bus.jobPhase = j.phase;
     RGL.automation?.pause?.();
 
+    // Open Bram speech bubble immediately (same window as manual generate)
+    try {
+      RGL.assist?.openAutoPanel?.(ctx, targetEl, "DWELL");
+    } catch (e) {
+      log("openAutoPanel failed", e);
+    }
+
     try {
       // 1) Dwell — already on post; re-read target
       j.phase = "DWELL";
       RGL.bus.jobPhase = j.phase;
+      RGL.assist?.setAutoPhase?.("DWELL");
+      RGL.assist?.setPose?.("reading");
       const count =
         kind === "comment"
           ? RGL.automation?.countCommentChars?.(targetEl) || { words: scored.words, chars: scored.words * 5 }
@@ -259,11 +268,13 @@
       log("dwell", Math.round(dwell), scored);
       await u.sleep(dwell);
 
-      // 2) Generate
+      // 2) Generate — bubble stays open with "soạn…"
       j.phase = "GENERATING";
       RGL.bus.jobPhase = j.phase;
+      RGL.assist?.setAutoPhase?.("GENERATING");
       RGL.assist?.setPose?.("writing");
       RGL.assist?.startScan?.();
+      RGL.assist?.showBubble?.();
 
       const style = L.seed ? "soft_mention" : "value_only";
       const genCtx = {
@@ -274,12 +285,25 @@
       const resp = await RGL.assist?.generateAsync?.(genCtx, L.model);
       RGL.assist?.stopScan?.();
 
-      if (!resp || resp.error) throw new Error(resp?.error || "generate failed");
+      if (!resp || resp.error) {
+        RGL.assist?.setDraftFromAuto?.("", { error: resp?.error || "generate failed", phaseLabel: "FAIL" });
+        throw new Error(resp?.error || "generate failed");
+      }
       const draft = resp.drafts?.[0];
-      if (!draft || draft.error || !draft.comment) throw new Error(draft?.error || "empty draft");
+      if (!draft || draft.error || !draft.comment) {
+        RGL.assist?.setDraftFromAuto?.("", { error: draft?.error || "empty draft", phaseLabel: "FAIL" });
+        throw new Error(draft?.error || "empty draft");
+      }
       j.draftText = String(draft.comment).trim();
       j.wordCount = u.wordCount(j.draftText);
       if (j.wordCount < 3) throw new Error("draft too short");
+
+      // Show generated text in bubble immediately
+      RGL.assist?.setDraftFromAuto?.(j.draftText, {
+        model: draft.model || L.model,
+        phaseLabel: "THINKING",
+      });
+      RGL.assist?.showBubble?.();
 
       const hash = j.draftText.slice(0, 120);
       if (job.postedHashes.has(hash)) throw new Error("duplicate draft");
@@ -287,6 +311,7 @@
       // 3) Think
       j.phase = "THINKING";
       RGL.bus.jobPhase = j.phase;
+      RGL.assist?.setAutoPhase?.("THINKING");
       RGL.assist?.setPose?.("thinking");
       j.thinkMs = u.estimateThinkMs(j.draftText, L.thinkSec);
       await u.sleep(j.thinkMs);
@@ -294,7 +319,9 @@
       // 4) Typing latency: open field, fill (verify non-empty), wait, re-fill, submit
       j.phase = "TYPING";
       RGL.bus.jobPhase = j.phase;
+      RGL.assist?.setAutoPhase?.("TYPING / FILL");
       RGL.assist?.setPose?.("writing");
+      RGL.assist?.showBubble?.();
       j.typingMs = u.estimateTypingMs(j.draftText, L.commentWpm);
       log("typing", j.wordCount, "words", Math.round(j.typingMs), "ms");
 
@@ -318,11 +345,14 @@
         try {
           await navigator.clipboard?.writeText(j.draftText);
         } catch (_) {}
+        RGL.assist?.setAutoPhase?.("FILL FAIL");
         throw new Error(
           "could not fill comment field (Lexical/empty) — draft copied to clipboard"
         );
       }
       log("filled ok", j.draftText.slice(0, 60));
+      RGL.assist?.setAutoPhase?.("FILLED · waiting");
+      RGL.assist?.showBubble?.();
 
       // Remainder of "typing" wait with text already in field
       const remain = Math.max(1500, j.typingMs * u.rand(0.35, 0.7));
@@ -331,6 +361,7 @@
       // 5) Reread
       j.phase = "REREAD";
       RGL.bus.jobPhase = j.phase;
+      RGL.assist?.setAutoPhase?.("REREAD");
       j.rereadMs = u.logish(1200, 5000, 0.5) * (1 + j.draftText.length / 400);
       await u.sleep(j.rereadMs);
 
@@ -343,6 +374,7 @@
         try {
           await navigator.clipboard?.writeText(j.draftText);
         } catch (_) {}
+        RGL.assist?.setAutoPhase?.("FILL FAIL");
         throw new Error("field empty before submit — refused (copied draft)");
       }
       await u.sleep(u.rand(300, 900));
@@ -350,8 +382,11 @@
       // 6) Submit
       j.phase = "SUBMIT";
       RGL.bus.jobPhase = j.phase;
+      RGL.assist?.setAutoPhase?.("SUBMIT");
+      RGL.assist?.showBubble?.();
       if (!L.autoSubmit) {
         log("autoSubmit off — left filled in composer");
+        RGL.assist?.setAutoPhase?.("DONE · no submit");
         j.phase = "DONE";
         RGL.bus.jobPhase = j.phase;
         return j;
@@ -365,6 +400,7 @@
         try {
           await navigator.clipboard?.writeText(j.draftText);
         } catch (_) {}
+        RGL.assist?.setAutoPhase?.("SUBMIT FAIL");
         throw new Error(sub.reason || "submit failed");
       }
 
@@ -377,11 +413,13 @@
 
       j.phase = "DONE";
       RGL.bus.jobPhase = j.phase;
+      RGL.assist?.setAutoPhase?.("DONE");
       RGL.assist?.setPose?.("done");
+      RGL.assist?.showBubble?.();
       log("comment posted", kind, sub.method, j.wordCount, "words");
 
-      // aftercare pause
-      await u.sleep(u.rand(3000, 12000));
+      // aftercare pause — keep bubble visible so user can see the draft
+      await u.sleep(u.rand(3000, 8000));
       return j;
     } catch (e) {
       j.phase = "FAIL";
@@ -389,6 +427,16 @@
       RGL.bus.jobPhase = j.phase;
       if (RGL.bus?.stats) RGL.bus.stats.commentFails = (RGL.bus.stats.commentFails || 0) + 1;
       log("job fail", j.error);
+      try {
+        RGL.assist?.openAutoPanel?.(ctx, targetEl, "FAIL");
+        if (j.draftText) {
+          RGL.assist?.setDraftFromAuto?.(j.draftText, { error: null, phaseLabel: "FAIL" });
+        } else {
+          RGL.assist?.setDraftFromAuto?.("", { error: j.error, phaseLabel: "FAIL" });
+        }
+        RGL.assist?.setAutoPhase?.("FAIL: " + String(j.error).slice(0, 40));
+        RGL.assist?.showBubble?.();
+      } catch (_) {}
       RGL.assist?.setPose?.("idle");
       return j;
     } finally {

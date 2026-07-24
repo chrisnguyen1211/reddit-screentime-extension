@@ -445,6 +445,79 @@
     if (isBubbleVisible()) requestAnimationFrame(() => positionBubble());
   }
 
+  /**
+   * Open Bram bubble for auto-comment jobs (same UI as manual ✨).
+   * Does not start a second LLM scan — caller generates and setDraftFromAuto().
+   */
+  function openAutoPanel(ctx, targetEl, phaseLabel) {
+    ensureMascot();
+    ensureBubble();
+    currentCtx = ctx || currentCtx;
+    currentTargetEl = targetEl || null;
+    try {
+      window.RGL?.automation?.pause?.();
+      if (window.RGL?.bus) window.RGL.bus.paused = true;
+    } catch (_) {}
+    showBubble();
+    if (ctx?.target) fillTarget(ctx.target);
+    if (ctx) renderQuote(ctx);
+    const ta = bubbleEl.querySelector(".rch-draft");
+    if (ta && !ta.value) {
+      ta.value = "";
+      ta.placeholder = phaseLabel || "🤖 Auto: Bram đang soạn…";
+      ta.style.height = "auto";
+    }
+    // mark auto mode on target bar
+    const bar = bubbleEl.querySelector(".rch-target");
+    if (bar && ctx?.target) {
+      const base = (seeding ? "🌱 " : "") + "🤖 AUTO · " + (ctx.target.label || "");
+      bar.style.display = "block";
+      bar.innerHTML = "<b></b>";
+      bar.querySelector("b").textContent = base + (ctx.target.author ? ` · u/${ctx.target.author}` : "");
+    } else if (bar && phaseLabel) {
+      bar.style.display = "block";
+      bar.innerHTML = "<b></b>";
+      bar.querySelector("b").textContent = "🤖 " + phaseLabel;
+    }
+    positionBubble();
+  }
+
+  function setDraftFromAuto(comment, meta = {}) {
+    ensureBubble();
+    showBubble();
+    const d = {
+      comment: String(comment || "").trim(),
+      model: meta.model || selectedModel,
+      error: meta.error || null,
+    };
+    if (d.error) {
+      renderDraft({ error: d.error });
+    } else {
+      renderDraft(d);
+    }
+    if (meta.phaseLabel) {
+      const bar = bubbleEl.querySelector(".rch-target");
+      if (bar) {
+        const prev = bar.querySelector("b")?.textContent || "🤖 AUTO";
+        bar.querySelector("b").textContent = prev.replace(/\s*·\s*(DWELL|GENERATING|THINKING|TYPING|REREAD|SUBMIT|DONE|FAIL).*$/i, "") + " · " + meta.phaseLabel;
+      }
+    }
+    positionBubble();
+  }
+
+  function setAutoPhase(phaseLabel) {
+    if (!bubbleEl) return;
+    showBubble();
+    const ta = bubbleEl.querySelector(".rch-draft");
+    if (ta && !ta.value) ta.placeholder = "🤖 Auto: " + (phaseLabel || "…");
+    const bar = bubbleEl.querySelector(".rch-target b");
+    if (bar) {
+      const core = bar.textContent.replace(/\s*·\s*(DWELL|GENERATING|THINKING|TYPING|REREAD|SUBMIT|DONE|FAIL|FILL|WAITING).*$/i, "");
+      bar.textContent = core + " · " + (phaseLabel || "");
+    }
+    positionBubble();
+  }
+
   // ── carry a Fill action across feed → post navigation ──────────────────────
   function absoluteUrl(value) {
     if (!value) return "";
@@ -1370,5 +1443,9 @@
     hideBubble,
     toggleBubble,
     positionBubble,
+    openAutoPanel,
+    setDraftFromAuto,
+    setAutoPhase,
+    renderDraft,
   };
 })();
