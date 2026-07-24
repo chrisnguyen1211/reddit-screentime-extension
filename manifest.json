@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Reddit Growth Lab",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "Unified lab: human screentime scroll + upvote + LLM comment/reply (fill→submit) with typing latency. Test accounts only.",
   "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [

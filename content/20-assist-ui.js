@@ -624,57 +624,259 @@
     }
     return preferGlobal ? postPageComposer() : null;
   }
-  async function fillComposerForTarget(text, target, options = {}) {
-    const el = await findComposerForTarget(target, options);
-    if (!el) return false;
+  function readEditorText(el) {
+    if (!el) return "";
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") return String(el.value || "");
+    return String(el.innerText || el.textContent || "").replace(/\u200b/g, "").trim();
+  }
+
+  function editorLooksFilled(el, want) {
+    const got = readEditorText(el);
+    if (!got || got.length < 2) return false;
+    const a = got.replace(/\s+/g, " ").trim().toLowerCase();
+    const b = String(want || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!b) return got.length >= 2;
+    // at least ~30% overlap or prefix match (Lexical may tweak whitespace)
+    if (a.includes(b.slice(0, Math.min(24, b.length)))) return true;
+    if (b.includes(a.slice(0, Math.min(24, a.length)))) return true;
+    return a.length >= Math.min(8, Math.floor(b.length * 0.3));
+  }
+
+  function selectAllIn(el) {
+    try {
+      el.focus();
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+        el.select();
+        return;
+      }
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) {}
+  }
+
+  async function fillContentEditable(el, text) {
     el.focus();
-    if (el.tagName === "TEXTAREA") {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-      setter.call(el, text);
+    await new Promise((r) => setTimeout(r, 40));
+    selectAllIn(el);
+
+    // Strategy 1: execCommand insertText (Lexical often listens)
+    try {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+      document.execCommand("insertText", false, text);
+    } catch (_) {}
+    if (editorLooksFilled(el, text)) return true;
+
+    // Strategy 2: beforeinput + input events
+    try {
+      selectAllIn(el);
+      el.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertFromPaste",
+          data: text,
+        })
+      );
+      document.execCommand("insertText", false, text);
+      el.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: text,
+        })
+      );
+    } catch (_) {}
+    if (editorLooksFilled(el, text)) return true;
+
+    // Strategy 3: ClipboardEvent paste (many React editors honor this)
+    try {
+      el.focus();
+      selectAllIn(el);
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      const paste = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dt,
+      });
+      el.dispatchEvent(paste);
+      // fallback if paste prevented but no insert
+      if (!editorLooksFilled(el, text)) {
+        document.execCommand("insertText", false, text);
+      }
+    } catch (_) {}
+    if (editorLooksFilled(el, text)) return true;
+
+    // Strategy 4: last resort DOM write + input (may still fail Lexical state)
+    try {
+      el.focus();
+      el.textContent = text;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
-    } else { // contenteditable / Lexical (new reddit): replace via execCommand so the editor tracks it
-      const sel = window.getSelection(); const range = document.createRange();
-      range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range);
-      document.execCommand("insertText", false, text);
-      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    } catch (_) {}
+    return editorLooksFilled(el, text);
+  }
+
+  async function fillNativeInput(el, text) {
+    el.focus();
+    const proto =
+      el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, text);
+    else el.value = text;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    return editorLooksFilled(el, text);
+  }
+
+  /** Click common “Add a comment” shells so shreddit composer mounts the editor. */
+  async function nudgeOpenComposer(targetKind) {
+    const needles = [
+      ...document.querySelectorAll(
+        "shreddit-composer, [data-testid='comment-submission-form'], [data-test-id='comment-submission-form']"
+      ),
+    ];
+    for (const root of needles) {
+      const clickables = [
+        root,
+        ...editableInRoot(root),
+        ...[...(root.querySelectorAll?.("button, [role='textbox'], faceplate-textarea, div") || [])],
+      ];
+      for (const c of clickables.slice(0, 12)) {
+        const t = clean(c.getAttribute?.("placeholder") || c.getAttribute?.("aria-label") || c.textContent || "");
+        if (/add a comment|what are your thoughts|join the conversation|viết bình luận|comment/i.test(t) || c === root) {
+          try {
+            c.click?.();
+          } catch (_) {}
+          await new Promise((r) => setTimeout(r, 150));
+          break;
+        }
+      }
     }
-    return true;
+    // top-level comment box often needs a click on the empty composer row
+    if (targetKind === "post") {
+      const box =
+        document.querySelector("shreddit-composer") ||
+        document.querySelector("[data-testid='comment-submission-form']");
+      try {
+        box?.click?.();
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  /**
+   * Fill Reddit composer. Returns true only if editor text is non-empty after fill
+   * (avoids Reddit "The field is required and cannot be empty").
+   */
+  async function fillComposerForTarget(text, target, options = {}) {
+    const want = String(text || "").trim();
+    if (!want) return false;
+
+    await nudgeOpenComposer(options.targetKind || currentCtx?.target?.kind);
+
+    let el = await findComposerForTarget(target, options);
+    if (!el) {
+      // one more attempt after nudge
+      await new Promise((r) => setTimeout(r, 300));
+      el = await findComposerForTarget(target, { ...options, preferGlobal: true });
+    }
+    if (!el) return false;
+
+    el.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    await new Promise((r) => setTimeout(r, 120));
+    el.focus();
+
+    let ok = false;
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+      ok = await fillNativeInput(el, want);
+    } else {
+      ok = await fillContentEditable(el, want);
+    }
+
+    // Retry once if still empty
+    if (!ok) {
+      await new Promise((r) => setTimeout(r, 200));
+      el = (await findComposerForTarget(target, { ...options, preferGlobal: true })) || el;
+      el.focus();
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") ok = await fillNativeInput(el, want);
+      else ok = await fillContentEditable(el, want);
+    }
+
+    await new Promise((r) => setTimeout(r, 80));
+    const finalOk = editorLooksFilled(el, want);
+    if (!finalOk) {
+      console.warn("[RGL] fillComposer: editor still empty after strategies", {
+        tag: el.tagName,
+        role: el.getAttribute("role"),
+        sample: readEditorText(el).slice(0, 40),
+      });
+    }
+    return finalOk;
   }
 
   /**
    * After fill: find Comment/Reply submit control near the active composer and click it.
-   * Works for top-level post comment AND nested reply (same path: open field → fill → click).
+   * Refuses to submit if the editor is still empty (Reddit validation error).
    */
   async function submitComposerForTarget(target, options = {}) {
-    const el = await findComposerForTarget(target, { ...options, allowControl: false });
+    let el = await findComposerForTarget(target, { ...options, allowControl: false, preferGlobal: options.preferGlobal !== false });
+    if (!el) el = await findComposerForTarget(target, { ...options, allowControl: true, preferGlobal: true });
     if (!el) return { ok: false, reason: "no-composer" };
+
+    // Hard gate: never click Comment on empty field
+    if (!readEditorText(el).trim()) {
+      return { ok: false, reason: "empty-field-refusing-submit" };
+    }
 
     // 1) Prefer explicit submit button near editor
     const scopeRoots = [];
     let node = el;
-    for (let i = 0; i < 8 && node; i++) {
+    for (let i = 0; i < 10 && node; i++) {
       scopeRoots.push(node);
+      if (node.shadowRoot) scopeRoots.push(node.shadowRoot);
       node = node.parentElement || node.getRootNode?.()?.host || null;
     }
-    const btnRe = /^(comment|reply|post|save)$/i;
+    // also search document composers
+    document.querySelectorAll("shreddit-composer, [data-testid='comment-submission-form']").forEach((n) => scopeRoots.push(n));
+
+    const btnRe = /^(comment|reply|post|save|bình luận|trả lời)$/i;
     let submitBtn = null;
     for (const root of scopeRoots) {
       const cands = [
         ...(root.querySelectorAll?.("button,[role='button'],faceplate-tracker,input[type='submit']") || []),
       ];
+      // walk shadow
+      root.querySelectorAll?.("*").forEach((ch) => {
+        if (ch.shadowRoot) {
+          ch.shadowRoot.querySelectorAll("button,[role='button']").forEach((b) => cands.push(b));
+        }
+      });
       submitBtn = cands.find((b) => {
         if (b.disabled) return false;
         const t = clean(b.textContent || b.getAttribute("aria-label") || b.value || "").slice(0, 40);
+        const ariaDisabled = b.getAttribute("aria-disabled");
+        if (ariaDisabled === "true") return false;
         return btnRe.test(t) || /comment|reply|submit/i.test(b.getAttribute("data-testid") || "");
       });
       if (submitBtn) break;
     }
 
+    // re-check empty right before click
+    if (!readEditorText(el).trim()) {
+      return { ok: false, reason: "empty-field-before-click" };
+    }
+
     if (submitBtn) {
       try {
         submitBtn.click();
-        return { ok: true, method: "button" };
+        return { ok: true, method: "button", textLen: readEditorText(el).length };
       } catch (e) {
         return { ok: false, reason: e.message };
       }
@@ -695,7 +897,7 @@
     };
     el.dispatchEvent(new KeyboardEvent("keydown", evInit));
     el.dispatchEvent(new KeyboardEvent("keyup", evInit));
-    return { ok: true, method: "mod-enter" };
+    return { ok: true, method: "mod-enter", textLen: readEditorText(el).length };
   }
 
   function generateAsync(ctx, only) {

@@ -291,33 +291,61 @@
       j.thinkMs = u.estimateThinkMs(j.draftText, L.thinkSec);
       await u.sleep(j.thinkMs);
 
-      // 4) Typing latency — fill mid-way, submit only after full typingMs
+      // 4) Typing latency: open field, fill (verify non-empty), wait, re-fill, submit
       j.phase = "TYPING";
       RGL.bus.jobPhase = j.phase;
       RGL.assist?.setPose?.("writing");
       j.typingMs = u.estimateTypingMs(j.draftText, L.commentWpm);
       log("typing", j.wordCount, "words", Math.round(j.typingMs), "ms");
 
-      const half = j.typingMs * u.rand(0.4, 0.6);
-      await u.sleep(half);
-
-      // Open composer: click Reply/Comment control, detect field, fill
-      // preferGlobal for post top-level; allowControl opens reply for comments
       const fillOpts = {
         preferGlobal: kind === "post",
         allowControl: true,
         targetKind: kind,
       };
-      const filled = await RGL.assist.fillComposerForTarget(j.draftText, targetEl, fillOpts);
-      if (!filled) throw new Error("could not detect/fill comment field");
 
-      await u.sleep(j.typingMs - half);
+      // Open composer + fill after a short think-to-type pause (not the full typingMs empty)
+      await u.sleep(u.rand(800, 2500));
+      let filled = await RGL.assist.fillComposerForTarget(j.draftText, targetEl, fillOpts);
+      if (!filled) {
+        await u.sleep(600);
+        filled = await RGL.assist.fillComposerForTarget(j.draftText, targetEl, {
+          ...fillOpts,
+          preferGlobal: true,
+        });
+      }
+      if (!filled) {
+        try {
+          await navigator.clipboard?.writeText(j.draftText);
+        } catch (_) {}
+        throw new Error(
+          "could not fill comment field (Lexical/empty) — draft copied to clipboard"
+        );
+      }
+      log("filled ok", j.draftText.slice(0, 60));
+
+      // Remainder of "typing" wait with text already in field
+      const remain = Math.max(1500, j.typingMs * u.rand(0.35, 0.7));
+      await u.sleep(remain);
 
       // 5) Reread
       j.phase = "REREAD";
       RGL.bus.jobPhase = j.phase;
-      j.rereadMs = u.logish(1200, 8000, 0.5) * (1 + j.draftText.length / 400);
+      j.rereadMs = u.logish(1200, 5000, 0.5) * (1 + j.draftText.length / 400);
       await u.sleep(j.rereadMs);
+
+      // Re-fill right before submit — Reddit/Lexical sometimes clears or never synced
+      filled = await RGL.assist.fillComposerForTarget(j.draftText, targetEl, {
+        ...fillOpts,
+        preferGlobal: true,
+      });
+      if (!filled) {
+        try {
+          await navigator.clipboard?.writeText(j.draftText);
+        } catch (_) {}
+        throw new Error("field empty before submit — refused (copied draft)");
+      }
+      await u.sleep(u.rand(300, 900));
 
       // 6) Submit
       j.phase = "SUBMIT";
@@ -330,7 +358,7 @@
       }
 
       const sub = await RGL.assist.submitComposerForTarget(targetEl, {
-        preferGlobal: kind === "post",
+        preferGlobal: true,
         targetKind: kind,
       });
       if (!sub.ok) {
