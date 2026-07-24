@@ -270,6 +270,7 @@
         live: RGL.automation?.liveConfigSnapshot?.(),
         energy: RGL.bus?.energy,
         budget: RGL.autoComment?.budgetOk?.(),
+        logMeta: RGL.sessionLog?.getMeta?.(),
       });
       return true;
     }
@@ -281,6 +282,21 @@
     if (msg?.type === "RGL_STOP") {
       stop();
       chrome.storage.local.set({ rgl_enabled: false });
+      RGL.sessionLog?.flush?.();
+      RGL.log?.("session stop");
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (msg?.type === "RGL_GET_LOG") {
+      RGL.sessionLog?.flush?.();
+      sendResponse({
+        ok: true,
+        log: RGL.sessionLog?.exportObject?.() || { meta: {}, events: [] },
+      });
+      return true;
+    }
+    if (msg?.type === "RGL_CLEAR_LOG") {
+      RGL.sessionLog?.clear?.();
       sendResponse({ ok: true });
       return true;
     }

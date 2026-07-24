@@ -362,6 +362,25 @@ footer .save-note b {
   color: #1a1a1b;
 }
 
+.log-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0 6px;
+}
+.log-row .hint {
+  width: 100%;
+  font-size: 10px;
+  color: #666;
+}
+.log-row .secondary {
+  flex: 1;
+  min-width: 120px;
+  padding: 7px 8px;
+  font-size: 11px;
+}
+
 .note {
   margin: 8px 0 0;
   font-size: 10px;

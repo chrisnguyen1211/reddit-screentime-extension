@@ -124,8 +124,6 @@
     wordCount,
   };
 
-  RGL.log = (...args) => console.log("[RGL]", ...args);
-
   // Master runtime bus
   RGL.bus = {
     phase: "OFF", // OFF | FEED | POST | COMMENTING | COOLDOWN
@@ -144,6 +142,134 @@
     live: {},
     lastOverlay: "",
   };
+
+  // ── Session logger (persist for testing) ─────────────────────────
+  // In-memory ring + chrome.storage.local key rgl_sessionLog
+  const LOG_MAX = 800;
+  const LOG_KEY = "rgl_sessionLog";
+  const LOG_META_KEY = "rgl_sessionMeta";
+  let sessionId =
+    "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+  let logBuffer = [];
+  let persistTimer = null;
+  let meta = {
+    sessionId,
+    startedAt: new Date().toISOString(),
+    href: typeof location !== "undefined" ? location.href : "",
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+  };
+
+  function serializeArg(a) {
+    if (a == null) return String(a);
+    if (typeof a === "string" || typeof a === "number" || typeof a === "boolean") return a;
+    if (a instanceof Error) return { error: a.message, stack: (a.stack || "").slice(0, 400) };
+    try {
+      return JSON.parse(JSON.stringify(a));
+    } catch (_) {
+      return String(a);
+    }
+  }
+
+  function schedulePersist() {
+    if (persistTimer) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      try {
+        chrome.storage.local.set({
+          [LOG_KEY]: logBuffer.slice(-LOG_MAX),
+          [LOG_META_KEY]: {
+            ...meta,
+            updatedAt: new Date().toISOString(),
+            entries: logBuffer.length,
+            phase: RGL.bus?.phase,
+            stats: RGL.bus?.stats,
+          },
+        });
+      } catch (_) {}
+    }, 600);
+  }
+
+  function pushLog(level, args) {
+    const entry = {
+      t: new Date().toISOString(),
+      ts: Date.now(),
+      level,
+      sessionId,
+      href: typeof location !== "undefined" ? location.pathname + location.search : "",
+      phase: RGL.bus?.phase || null,
+      jobPhase: RGL.bus?.jobPhase || null,
+      msg: args.map(serializeArg),
+    };
+    logBuffer.push(entry);
+    if (logBuffer.length > LOG_MAX) logBuffer = logBuffer.slice(-LOG_MAX);
+    schedulePersist();
+    return entry;
+  }
+
+  RGL.log = (...args) => {
+    console.log("[RGL]", ...args);
+    pushLog("info", args);
+  };
+  RGL.warn = (...args) => {
+    console.warn("[RGL]", ...args);
+    pushLog("warn", args);
+  };
+  RGL.error = (...args) => {
+    console.error("[RGL]", ...args);
+    pushLog("error", args);
+  };
+
+  RGL.sessionLog = {
+    getSessionId: () => sessionId,
+    getBuffer: () => logBuffer.slice(),
+    getMeta: () => ({ ...meta, entries: logBuffer.length }),
+    clear: () => {
+      logBuffer = [];
+      sessionId =
+        "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+      meta = {
+        sessionId,
+        startedAt: new Date().toISOString(),
+        href: typeof location !== "undefined" ? location.href : "",
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      };
+      try {
+        chrome.storage.local.set({
+          [LOG_KEY]: [],
+          [LOG_META_KEY]: { ...meta, entries: 0, clearedAt: new Date().toISOString() },
+        });
+      } catch (_) {}
+      RGL.log("session log cleared", sessionId);
+    },
+    /** Full export object for download / popup */
+    exportObject: () => ({
+      meta: {
+        ...meta,
+        exportedAt: new Date().toISOString(),
+        entries: logBuffer.length,
+        phase: RGL.bus?.phase,
+        stats: RGL.bus?.stats,
+        live: RGL.bus?.live,
+      },
+      events: logBuffer.slice(),
+    }),
+    flush: () => {
+      try {
+        chrome.storage.local.set({
+          [LOG_KEY]: logBuffer.slice(-LOG_MAX),
+          [LOG_META_KEY]: {
+            ...meta,
+            updatedAt: new Date().toISOString(),
+            entries: logBuffer.length,
+            stats: RGL.bus?.stats,
+          },
+        });
+      } catch (_) {}
+    },
+  };
+
+  // seed start line
+  pushLog("info", ["session start", sessionId, meta.href]);
 
   RGL.getSettings = () =>
     new Promise((resolve) => {

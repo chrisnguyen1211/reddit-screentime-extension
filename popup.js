@@ -236,7 +236,32 @@ function pollStats() {
               job.typingMs ? `~${Math.round(job.typingMs / 1000)}s type` : ""
             }`
           : "job —");
+      const lm = res.logMeta;
+      if (lm && $("logMeta")) {
+        $("logMeta").textContent = `Log: ${lm.entries || 0} events · ${String(lm.sessionId || "").slice(0, 14)}…`;
+      }
     });
+  });
+}
+
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function withActiveRedditTab(fn) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab?.id || !tab.url?.includes("reddit.com")) {
+      if ($("logMeta")) $("logMeta").textContent = "Log: mở tab reddit.com trước";
+      return;
+    }
+    fn(tab.id);
   });
 }
 
@@ -300,6 +325,41 @@ $("save").addEventListener("click", () => {
     return;
   }
   save();
+});
+
+$("btnExportLog")?.addEventListener("click", () => {
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_GET_LOG" }, (res) => {
+      if (chrome.runtime.lastError || !res?.ok) {
+        // fallback: storage ring (last flushed)
+        chrome.storage.local.get(["rgl_sessionLog", "rgl_sessionMeta"], (s) => {
+          const obj = {
+            meta: s.rgl_sessionMeta || {},
+            events: s.rgl_sessionLog || [],
+            note: "fallback from chrome.storage (tab may need F5)",
+          };
+          const name = `rgl-session-${Date.now()}.json`;
+          downloadJson(obj, name);
+          if ($("logMeta")) $("logMeta").textContent = `Log: exported ${obj.events.length} (storage)`;
+        });
+        return;
+      }
+      const name = `rgl-session-${res.log?.meta?.sessionId || Date.now()}.json`;
+      downloadJson(res.log, name);
+      if ($("logMeta")) {
+        $("logMeta").textContent = `Log: exported ${res.log?.events?.length || 0} events`;
+      }
+    });
+  });
+});
+
+$("btnClearLog")?.addEventListener("click", () => {
+  withActiveRedditTab((tabId) => {
+    chrome.tabs.sendMessage(tabId, { type: "RGL_CLEAR_LOG" }, () => {
+      chrome.storage.local.set({ rgl_sessionLog: [], rgl_sessionMeta: { clearedAt: new Date().toISOString() } });
+      if ($("logMeta")) $("logMeta").textContent = "Log: cleared";
+    });
+  });
 });
 
 $("btnHealth")?.addEventListener("click", async () => {
