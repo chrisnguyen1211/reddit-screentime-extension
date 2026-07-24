@@ -12,9 +12,45 @@ Gộp **screentime scroll** + **upvote** + **LLM comment/reply (fill → click s
    /Users/nguyenhuycuong/reddit-screentime-extension
    ```
 3. Mở [reddit.com](https://www.reddit.com), **F5** sau mỗi lần reload extension
-4. Popup → tab **Comment**: endpoint `http://localhost:20128/v1` + API key (9router)
+4. Popup → tab **Comment**: endpoint + API key (9router)
 5. Tab **Safety**: tick ack risk nếu dùng Full
 6. Tab **Run**: chọn mode → bật ON
+
+## LLM endpoint: local vs máy khác (Tailscale)
+
+| Máy | Endpoint trong popup |
+|-----|----------------------|
+| Cùng máy chạy 9router | `http://localhost:20128/v1` |
+| Máy khác (Tailscale) | `http://100.x.x.x:20128/v1` hoặc MagicDNS `http://<hostname>:20128/v1` |
+
+### Setup Tailscale (khuyến nghị)
+
+1. Cài Tailscale **cả 2 máy**, login cùng account, check online.
+2. **Máy host** (chạy 9router):
+   ```bash
+   # Lấy IP Tailscale
+   tailscale ip -4
+   # ví dụ: 100.91.23.45
+   ```
+   - Chạy 9router **bind `0.0.0.0:20128`**, không chỉ `127.0.0.1`  
+     (nếu chỉ localhost thì máy kia không vào được).
+3. **Máy client** (chỉ Chrome extension):
+   - Popup → Comment → endpoint:
+     ```
+     http://100.91.23.45:20128/v1
+     ```
+   - Cùng API key như máy host
+   - Bấm **Test endpoint (HEALTH)** → phải OK
+4. Firewall macOS: cho phép node/9router accept incoming trên port 20128 (Tailscale thường OK nếu bind 0.0.0.0).
+
+Test nhanh từ máy client:
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 \
+  http://100.x.x.x:20128/v1/models
+# mong đợi 200 (hoặc 401 nếu cần key — vẫn là “reachable”)
+```
+
+**Không cần** expose 9router ra internet public.
 
 ## Modes
 

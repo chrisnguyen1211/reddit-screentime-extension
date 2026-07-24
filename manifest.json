@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Reddit Growth Lab",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Unified lab: human screentime scroll + upvote + LLM comment/reply (fill→submit) with typing latency. Test accounts only.",
   "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [
@@ -10,7 +10,9 @@
     "https://preview.redd.it/*",
     "https://external-preview.redd.it/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "http://*/*",
+    "https://*/*"
   ],
   "action": {
     "default_popup": "popup.html",

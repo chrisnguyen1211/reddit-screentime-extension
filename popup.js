@@ -199,6 +199,27 @@ $("btnStop").addEventListener("click", () => {
 });
 $("save").addEventListener("click", () => save());
 
+$("btnHealth")?.addEventListener("click", async () => {
+  // persist endpoint first so SW uses current form values
+  save();
+  const box = $("healthResult");
+  box.textContent = "Health: checking…";
+  try {
+    // give storage a tick
+    await new Promise((r) => setTimeout(r, 150));
+    chrome.runtime.sendMessage({ type: "HEALTH" }, (res) => {
+      if (chrome.runtime.lastError) {
+        box.textContent = `Health: error — ${chrome.runtime.lastError.message}`;
+        return;
+      }
+      if (res?.ok) box.textContent = `Health: OK (HTTP ${res.status}) · endpoint reachable`;
+      else box.textContent = `Health: FAIL — ${res?.error || `HTTP ${res?.status}`}`;
+    });
+  } catch (e) {
+    box.textContent = `Health: FAIL — ${e.message}`;
+  }
+});
+
 [
   "rgl_scrollSpeed",
   "rgl_upvoteChance",

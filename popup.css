@@ -170,6 +170,12 @@ h1 {
   color: #888;
   line-height: 1.3;
 }
+.field-note code {
+  font-size: 10px;
+  background: #eee;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
 
 .dynamic-box {
   border-color: #ffd0c0;

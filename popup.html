@@ -94,8 +94,17 @@
       <div class="fields">
         <label>
           <span>LLM endpoint</span>
-          <input type="text" id="rgl_endpoint" value="http://localhost:20128/v1" />
+          <input type="text" id="rgl_endpoint" value="http://localhost:20128/v1" placeholder="http://100.x.x.x:20128/v1" />
         </label>
+        <p class="field-note">
+          Máy local: <code>http://localhost:20128/v1</code>.
+          Máy khác qua <b>Tailscale</b>:
+          <code>http://&lt;tailscale-ip&gt;:20128/v1</code>
+          (hoặc MagicDNS <code>http://my-mac:20128/v1</code>).
+          9router trên máy host phải bind <code>0.0.0.0</code>, không chỉ 127.0.0.1.
+        </p>
+        <button type="button" id="btnHealth" class="secondary">Test endpoint (HEALTH)</button>
+        <div class="live-cfg" id="healthResult">Health: —</div>
         <label>
           <span>API key</span>
           <input type="password" id="rgl_apiKey" placeholder="9router / OpenAI key" />
