@@ -383,7 +383,7 @@
         targetKind: kind,
       };
 
-      // Open composer + fill after a short think-to-type pause (not the full typingMs empty)
+      // Open composer + fill ONCE (re-fill only if empty — avoids duplicated text)
       await u.sleep(u.rand(800, 2500));
       let filled = await RGL.assist.fillComposerForTarget(j.draftText, targetEl, fillOpts);
       if (!filled) {
@@ -410,24 +410,43 @@
       const remain = Math.max(1500, j.typingMs * u.rand(0.35, 0.7));
       await u.sleep(remain);
 
-      // 5) Reread
+      // 5) Reread — do NOT fill again if text already present (was causing "foofoo" duplicates)
       j.phase = "REREAD";
       RGL.bus.jobPhase = j.phase;
       RGL.assist?.setAutoPhase?.("REREAD");
       j.rereadMs = u.logish(1200, 5000, 0.5) * (1 + j.draftText.length / 400);
       await u.sleep(j.rereadMs);
 
-      // Re-fill right before submit — Reddit/Lexical sometimes clears or never synced
-      filled = await RGL.assist.fillComposerForTarget(j.draftText, targetEl, {
-        ...fillOpts,
-        preferGlobal: true,
-      });
-      if (!filled) {
+      // Only re-fill if field was cleared by Reddit; replace-not-append is handled inside fill
+      const stillThere = await (async () => {
         try {
-          await navigator.clipboard?.writeText(j.draftText);
-        } catch (_) {}
-        RGL.assist?.setAutoPhase?.("FILL FAIL");
-        throw new Error("field empty before submit — refused (copied draft)");
+          const el = await RGL.assist.findComposerForTarget?.(targetEl, {
+            preferGlobal: true,
+            allowControl: false,
+            targetKind: kind,
+          });
+          if (!el) return false;
+          const t = (el.innerText || el.value || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const w = j.draftText.replace(/\s+/g, " ").trim().toLowerCase();
+          return t.includes(w.slice(0, Math.min(20, w.length))) && t.length < w.length * 1.5;
+        } catch (_) {
+          return false;
+        }
+      })();
+      if (!stillThere) {
+        filled = await RGL.assist.fillComposerForTarget(j.draftText, targetEl, {
+          ...fillOpts,
+          preferGlobal: true,
+        });
+        if (!filled) {
+          try {
+            await navigator.clipboard?.writeText(j.draftText);
+          } catch (_) {}
+          RGL.assist?.setAutoPhase?.("FILL FAIL");
+          throw new Error("field empty before submit — refused (copied draft)");
+        }
+      } else {
+        log("skip re-fill — text already in field");
       }
       await u.sleep(u.rand(300, 900));
 

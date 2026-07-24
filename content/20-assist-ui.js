@@ -801,16 +801,34 @@
     return String(el.innerText || el.textContent || "").replace(/\u200b/g, "").trim();
   }
 
+  function normText(s) {
+    return String(s || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
+  /** True if editor has want exactly once (not doubled/tripled). */
   function editorLooksFilled(el, want) {
     const got = readEditorText(el);
     if (!got || got.length < 2) return false;
-    const a = got.replace(/\s+/g, " ").trim().toLowerCase();
-    const b = String(want || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const a = normText(got);
+    const b = normText(want);
     if (!b) return got.length >= 2;
-    // at least ~30% overlap or prefix match (Lexical may tweak whitespace)
-    if (a.includes(b.slice(0, Math.min(24, b.length)))) return true;
-    if (b.includes(a.slice(0, Math.min(24, a.length)))) return true;
-    return a.length >= Math.min(8, Math.floor(b.length * 0.3));
+    // reject clear duplicates: "foofoo" or "foo foo" from double insert
+    if (b.length >= 8) {
+      if (a === b + b) return false;
+      if (a === b + " " + b) return false;
+      // doubled without space (user screenshot: "usefuldamn this is actually useful")
+      if (a.length >= b.length * 1.7 && a.startsWith(b) && a.includes(b, 3)) return false;
+      const idx2 = a.indexOf(b, Math.max(1, Math.floor(b.length * 0.5)));
+      if (a.startsWith(b) && idx2 > 0) return false;
+    }
+    if (a === b) return true;
+    if (a.includes(b) && a.length <= b.length + 8) return true;
+    // prefix match only if lengths close (avoid accepting doubled text as "includes")
+    if (a.startsWith(b.slice(0, Math.min(24, b.length))) && a.length <= b.length * 1.25) return true;
+    return false;
   }
 
   function selectAllIn(el) {
@@ -828,127 +846,153 @@
     } catch (_) {}
   }
 
+  /** Wipe editor completely before a single insert pass. */
+  async function clearEditor(el) {
+    try {
+      el.focus();
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+        const proto =
+          el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        try {
+          const tracker = el._valueTracker;
+          if (tracker) tracker.setValue(el.value || "x");
+        } catch (_) {}
+        if (setter) setter.call(el, "");
+        else el.value = "";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+      selectAllIn(el);
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+      // if still has text, force empty
+      if (readEditorText(el)) {
+        el.textContent = "";
+        el.innerHTML = "";
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+      }
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 30));
+  }
+
   async function fillNativeInput(el, text) {
+    await clearEditor(el);
     el.focus();
     const proto =
       el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-    if (setter) setter.call(el, text);
-    else el.value = text;
-    // React-style tracker
     try {
       const tracker = el._valueTracker;
       if (tracker) tracker.setValue("");
     } catch (_) {}
+    if (setter) setter.call(el, text);
+    else el.value = text;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
     return editorLooksFilled(el, text);
   }
 
-  /** Best path for Lexical/shreddit: clipboard write + paste into focused editor. */
-  async function fillViaSystemClipboard(el, text) {
-    try {
-      el.focus();
-      selectAllIn(el);
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-        // execCommand paste (works when document focused + permission)
-        const pasted = document.execCommand("paste");
-        if (editorLooksFilled(el, text)) return true;
-        if (!pasted) {
+  /**
+   * Single-shot fill for contenteditable/Lexical.
+   * Clear once, then try strategies until ONE succeeds — never stack inserts.
+   */
+  async function fillContentEditable(el, text) {
+    el.focus();
+    await new Promise((r) => setTimeout(r, 50));
+    await clearEditor(el);
+
+    const tryInsert = async (fn) => {
+      // if already good, stop
+      if (editorLooksFilled(el, text)) return true;
+      // if garbage/duplicate from partial, clear again
+      const cur = readEditorText(el);
+      if (cur) await clearEditor(el);
+      try {
+        el.focus();
+        await fn();
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 40));
+      return editorLooksFilled(el, text);
+    };
+
+    // 1) insertText once
+    if (
+      await tryInsert(async () => {
+        selectAllIn(el);
+        document.execCommand("insertText", false, text);
+      })
+    )
+      return true;
+
+    // 2) clipboard paste once (after clear)
+    if (
+      await tryInsert(async () => {
+        selectAllIn(el);
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+          if (!document.execCommand("paste")) {
+            const dt = new DataTransfer();
+            dt.setData("text/plain", text);
+            el.dispatchEvent(
+              new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt })
+            );
+          }
+        } else {
           const dt = new DataTransfer();
           dt.setData("text/plain", text);
           el.dispatchEvent(
             new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt })
           );
         }
-      } else {
-        const dt = new DataTransfer();
-        dt.setData("text/plain", text);
+      })
+    )
+      return true;
+
+    // 3) beforeinput + insertText once
+    if (
+      await tryInsert(async () => {
+        selectAllIn(el);
         el.dispatchEvent(
-          new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt })
+          new InputEvent("beforeinput", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "insertText",
+            data: text,
+          })
         );
-      }
-    } catch (e) {
-      console.warn("[RGL] clipboard fill failed", e);
+        document.execCommand("insertText", false, text);
+        el.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "insertText",
+            data: text,
+          })
+        );
+      })
+    )
+      return true;
+
+    // 4) DOM once
+    if (
+      await tryInsert(async () => {
+        el.textContent = text;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      })
+    )
+      return true;
+
+    // If doubled somehow, collapse to single
+    const got = readEditorText(el);
+    const b = normText(text);
+    const a = normText(got);
+    if (b && (a === b + b || (a.startsWith(b) && a.length >= b.length * 1.7))) {
+      await clearEditor(el);
+      document.execCommand("insertText", false, text);
     }
-    return editorLooksFilled(el, text);
-  }
-
-  async function fillContentEditable(el, text) {
-    el.focus();
-    await new Promise((r) => setTimeout(r, 60));
-
-    // Strategy 0: real clipboard paste (most reliable on Lexical)
-    if (await fillViaSystemClipboard(el, text)) return true;
-
-    // Strategy 1: execCommand insertText
-    try {
-      el.focus();
-      selectAllIn(el);
-      document.execCommand("selectAll", false, null);
-      document.execCommand("delete", false, null);
-      document.execCommand("insertText", false, text);
-    } catch (_) {}
-    if (editorLooksFilled(el, text)) return true;
-
-    // Strategy 2: beforeinput insertFromPaste + insertText
-    try {
-      selectAllIn(el);
-      el.dispatchEvent(
-        new InputEvent("beforeinput", {
-          bubbles: true,
-          cancelable: true,
-          inputType: "insertFromPaste",
-          data: text,
-        })
-      );
-      document.execCommand("insertText", false, text);
-      el.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          cancelable: true,
-          inputType: "insertText",
-          data: text,
-        })
-      );
-    } catch (_) {}
-    if (editorLooksFilled(el, text)) return true;
-
-    // Strategy 3: per-chunk insertText (Lexical sometimes drops bulk insert)
-    try {
-      el.focus();
-      selectAllIn(el);
-      document.execCommand("selectAll", false, null);
-      document.execCommand("delete", false, null);
-      const chunk = 24;
-      for (let i = 0; i < text.length; i += chunk) {
-        document.execCommand("insertText", false, text.slice(i, i + chunk));
-        await new Promise((r) => setTimeout(r, 8));
-      }
-    } catch (_) {}
-    if (editorLooksFilled(el, text)) return true;
-
-    // Strategy 4: synthetic paste event only
-    try {
-      el.focus();
-      selectAllIn(el);
-      const dt = new DataTransfer();
-      dt.setData("text/plain", text);
-      el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
-      document.execCommand("insertText", false, text);
-    } catch (_) {}
-    if (editorLooksFilled(el, text)) return true;
-
-    // Strategy 5: last resort DOM (often looks filled but Reddit state empty — still try)
-    try {
-      el.focus();
-      el.innerHTML = "";
-      el.textContent = text;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    } catch (_) {}
     return editorLooksFilled(el, text);
   }
 
@@ -1057,8 +1101,8 @@
       ok = await fillContentEditable(el, want);
     }
 
-    // Retry with page-level composer
-    if (!ok) {
+    // Retry ONCE only if empty — never stack a second insert on partial text
+    if (!ok && !readEditorText(el).trim()) {
       await new Promise((r) => setTimeout(r, 250));
       await nudgeOpenComposer(kind);
       el = (await findComposerForTarget(target, { ...options, preferGlobal: true })) || postPageComposer() || el;
@@ -1073,6 +1117,18 @@
     // Re-read active element — Lexical may swap node
     const f3 = deepActiveElement();
     const checkEl = isEditable(f3) && !isOurUi(f3) ? f3 : el;
+    // Dedup if we still see doubled content
+    const raw = readEditorText(checkEl);
+    const nWant = normText(want);
+    const nGot = normText(raw);
+    if (nWant && nGot.startsWith(nWant) && nGot.length >= nWant.length * 1.7) {
+      await clearEditor(checkEl);
+      if (checkEl.tagName === "TEXTAREA" || checkEl.tagName === "INPUT") await fillNativeInput(checkEl, want);
+      else {
+        checkEl.focus();
+        document.execCommand("insertText", false, want);
+      }
+    }
     const finalOk = editorLooksFilled(checkEl, want) || editorLooksFilled(el, want);
     if (!finalOk) {
       console.warn("[RGL] fillComposer: editor still empty after strategies", {
