@@ -95,11 +95,12 @@ popup.html / popup.js        # Run | Scroll | Comment | Dist | Safety
 
 | File | Nội dung |
 |------|----------|
-| [`docs/ALGORITHMS.md`](docs/ALGORITHMS.md) | 3 mode OBS / ENG / FULL + algorithm |
-| [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) | Queue / quota / quiet hours |
-| [`docs/ANTI_SHADOWBAN.md`](docs/ANTI_SHADOWBAN.md) | Ban-guard proxy metrics |
-| [`docs/THREAT_AUDIT.md`](docs/THREAT_AUDIT.md) | Multi-signal fingerprint audit |
+| [`docs/ALGORITHMS.md`](docs/ALGORITHMS.md) | 3 mode OBS / ENG / FULL + algorithm (v2.1) |
+| [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) | Queue / quota / quiet hours / export-import |
+| [`docs/ANTI_SHADOWBAN.md`](docs/ANTI_SHADOWBAN.md) | Ban-guard 9:1 + velocity + dist layer |
+| [`docs/THREAT_AUDIT.md`](docs/THREAT_AUDIT.md) | Multi-signal fingerprint audit (v2.1) |
 | [`docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md`](docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md) | Overlay design prompt |
+| [`scripts/AUDIT_REMOVALS.md`](scripts/AUDIT_REMOVALS.md) | Offline audit comment/post removal rates |
 
 ## Risk
 

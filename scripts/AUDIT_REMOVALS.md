@@ -1,5 +1,8 @@
 # Audit tỉ lệ comment/post bị remove
 
+Script: `scripts/audit-reddit-removals.mjs`  
+Dùng để đo **% comment/post bị remove** (mod / spam / deleted) từ dump JSON Reddit (login browser).
+
 ## 403 từ Node? Dùng browser dump (khuyến nghị)
 
 Reddit chặn script/`fetch` không cookie → **HTTP 403**. Cách chắc chắn:

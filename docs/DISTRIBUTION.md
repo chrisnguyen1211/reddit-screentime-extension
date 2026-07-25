@@ -1,6 +1,7 @@
-# Comment distribution (v2.1)
+# Comment distribution (v2.1.0)
 
-Phân bổ comment có kiểm soát — tab **Dist** trong popup.
+Phân bổ comment có kiểm soát — tab **Dist** trong popup.  
+Liên quan: [ALGORITHMS.md](./ALGORITHMS.md) · [ANTI_SHADOWBAN.md](./ANTI_SHADOWBAN.md) · [THREAT_AUDIT.md](./THREAT_AUDIT.md)
 
 ## Tính năng
 

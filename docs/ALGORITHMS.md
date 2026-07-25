@@ -1,10 +1,11 @@
 # Reddit Growth Lab — Cách hoạt động & Algorithm
 
-Tài liệu kỹ thuật cho extension **Reddit Growth Lab** (v2.0.1+).  
-Giải thích **3 mode**: **Observe (OBS)** · **Engage (ENG)** · **Full**, kèm công thức, state machine, và anti-pattern nhịp người.
+Tài liệu kỹ thuật cho extension **Reddit Growth Lab** (**v2.1.0**).  
+Giải thích **3 mode**: **Observe (OBS)** · **Engage (ENG)** · **Full**, kèm công thức, state machine, distribution, ban-guard, và anti-pattern nhịp người.
 
 > **Ngôn ngữ:** Tiếng Việt (chi tiết) + English summary cuối mỗi phần lớn.  
-> **Scope:** Lab / test account. Auto vote + auto comment có thể vi phạm Reddit ToS.
+> **Scope:** Lab / test account. Auto vote + auto comment có thể vi phạm Reddit ToS.  
+> **Docs liên quan:** [DISTRIBUTION.md](./DISTRIBUTION.md) · [ANTI_SHADOWBAN.md](./ANTI_SHADOWBAN.md) · [THREAT_AUDIT.md](./THREAT_AUDIT.md)
 
 ---
 
@@ -14,21 +15,24 @@ Giải thích **3 mode**: **Observe (OBS)** · **Engage (ENG)** · **Full**, kè
 |------------|---------|
 | **Chrome content scripts** | Chạy trên `reddit.com`: scroll, đọc DOM, upvote, comment |
 | **Service worker** | Gọi LLM (9router / OpenAI-compatible), badge, health check |
-| **Popup** | Bật/tắt, mode, slider config, LLM endpoint |
-| **Overlay UI** | Panel góc phải: phase, metrics, job timeline, budget |
+| **Popup** | Tabs: **Run · Scroll · Comment · Dist · Safety** |
+| **Overlay UI** | Panel góc phải: phase, metrics, job timeline, budget, ban/dist flash |
 
 ### 1.1 Kiến trúc module
 
 ```
 content/
-  00-shared.js        # RNG, DEFAULTS, estimateTypingMs / ThinkMs
+  00-shared.js        # RNG, DEFAULTS, promo-invite detect, session log
   05-overlay.js       # UI overlay (Claude design → production)
-  10-automation.js    # Scroll, dwell theo chữ, upvote, config drift
+  08-ban-guard.js     # Proxy 9:1 / velocity / multi-sub gates
+  10-automation.js    # Scroll, dwell theo chữ, upvote, config drift, stayInSub
+  12-distribution.js  # Queue, quotas, quiet hours, session max, stealth
   20-assist-ui.js     # Bram mascot, ✨ manual, fill/submit composer
-  30-auto-comment.js  # Full auto comment/reply + typing latency
-  40-orchestrator.js  # Main loop theo mode OBS / ENG / FULL
+  30-auto-comment.js  # Full auto comment/reply + typing latency + dist gates
+  40-orchestrator.js  # Main loop OBS / ENG / FULL + RGL_DIST messages
 background.js         # Badge + HEALTH
 background-llm.js     # Prompt, scrub, generate, vision
+popup.html / popup.js # Settings + Dist queue UI
 ```
 
 ### 1.2 Master switch
@@ -274,8 +278,14 @@ budgetOk:
   commentsThisSession < maxPerSession     (default 8)
   commentsThisHour    < maxPerHour        (default 4)
   now - lastComment   >= max(hardMinGap, live.minGapSec)   (default ≥ 240s)
+banGuard.allowAuto(seed|comment):
+  risk band, 9:1 value:promo, velocity, multi-sub
+dist.allowCommentOnPage:
+  quiet hours | allowlist/blocklist | day/sub quota
+  | queue-only | session max | draft-hash dedupe
 intent:
   chance(live.commentChance)              (base 12%, drifts)
+  # promo-invite có thể skip roll
 thread:
   chưa comment thread này trong session
 page:
@@ -343,9 +353,12 @@ REREAD
   → logish(1.2s, 8s) * f(chars)
 
 SUBMIT
-  → submitComposer: click Comment/Reply button
+  → nếu rgl_humanSubmitOnly || !autoSubmit:
+        STOP sau fill — user bấm Comment (không đếm dist day)
+  → else submitComposer: click Comment/Reply
     else Meta/Ctrl+Enter
   → fail-soft: copy clipboard, không spam click
+  → markQueue(done|fail), banGuard.record, dist.recordComment
 
 DONE / FAIL
   → record budget, touchedThreads
@@ -437,12 +450,59 @@ Nút **Test endpoint (HEALTH)** trong popup.
 | Job steps | DWELL→…→TYPING (progress bar)→SUBMIT |
 | Rhythm strip | scroll speed, comment %, wpm, budget, eng gate |
 | Footer | 9router ok/down · model · status sentence |
+| Status flash | Ban-risk band · quiet hours · queue pending |
 
-Click header → collapse pill; click pill → expand.
+Click header → collapse pill; click pill → expand.  
+`rgl_stealthUi` → mờ mascot/overlay (`html.rgl-stealth`).
 
 ---
 
-## 8. Defaults quan trọng
+## 8. Comment distribution (v2.1)
+
+Chi tiết: [`DISTRIBUTION.md`](./DISTRIBUTION.md). Module: `content/12-distribution.js`.
+
+### 8.1 Feed (Full) — `nextFeedAction()`
+
+```
+if quiet hours          → wait / COOLDOWN
+if session max minutes  → stop + force OFF
+if queue pending        → navigate URL (Full only)
+if queueOnly + empty    → wait
+else organic            → stayInSub / allowlist feed
+```
+
+### 8.2 Defaults distribution
+
+| Key | Default |
+|-----|---------|
+| `rgl_distEnabled` | true |
+| `rgl_maxCommentsPerSubDay` | 2 |
+| `rgl_maxCommentsPerDay` | 8 |
+| `rgl_quietHoursStart/End` | 1–7 local |
+| `rgl_stayInSub` | true |
+| `rgl_queueOnly` | false |
+| `rgl_sessionMaxMinutes` | 90 |
+| `rgl_humanSubmitOnly` | false |
+| `rgl_stealthUi` | false |
+| `rgl_subBlocklist` | announcements,reddit.com |
+
+Storage: `rgl_postQueue`, `rgl_distDayStats`, `rgl_draftHashes`.
+
+---
+
+## 9. Ban-guard (proxy, không phải anti-detect)
+
+Chi tiết: [`ANTI_SHADOWBAN.md`](./ANTI_SHADOWBAN.md). Module: `content/08-ban-guard.js`.
+
+| Metric | Gate |
+|--------|------|
+| Value : promo ≥ ~9:1 | Block auto-seed nếu quá thấp |
+| Comments / 1h, /24h | Block auto-comment nếu burst |
+| Distinct subs / 1h | Multi-sub burst risk |
+
+---
+
+## 10. Defaults quan trọng (scroll / comment)
 
 | Key | Default | Ghi chú |
 |-----|---------|---------|
@@ -450,19 +510,20 @@ Click header → collapse pill; click pill → expand.
 | `rgl_scrollSpeed` | 1.2 | Base; live drifts |
 | `rgl_upvoteChance` | 8% | ENG/FULL |
 | `rgl_openPostChance` | 12% | ENG/FULL |
-| `rgl_commentChanceBase` | 12% | FULL intent roll |
+| `rgl_commentChanceBase` | 12% | FULL intent roll (max UI ~40) |
 | `rgl_commentWpmBase` | 38 | Mobile-ish typing |
 | `rgl_minSecondsBetweenComments` | 240 | Hard floor gap |
 | `rgl_maxCommentsPerHour` | 4 | Ceiling |
 | `rgl_maxCommentsPerSession` | 8 | Ceiling |
 | `rgl_minEngagementScore` | 0.35 | Skip low eng |
 | `rgl_preferQuestions` | true | Boost `?` |
+| `rgl_autoSubmit` | true | Full click Comment (tắt = fill only) |
 | `rgl_dynamicConfig` | true | Drift on |
 | `rgl_driftPercent` | 35 | ±% re-roll |
 
 ---
 
-## 9. Flow chart tóm tắt
+## 11. Flow chart tóm tắt
 
 ```
 START
@@ -471,18 +532,23 @@ START
   │
   ├─ ENG ──► scroll + dwell + upvote + open post ──► read thread ──► back ──► loop
   │
-  └─ FULL ─► như ENG ──► on post:
-                score target (question + eng)
-                │
-                ├─ skip ──► continue scroll comments
-                │
-                └─ job ──► dwell → LLM → think → type → fill → click
-                            └── budget / gap / 1-per-thread ──► back feed
+  └─ FULL ─► dist.nextFeedAction (queue / quiet / stayInSub)
+              │
+              └─ on post:
+                    budget + banGuard + dist gates
+                    score target (question + eng + promo)
+                    │
+                    ├─ skip ──► continue scroll comments
+                    │
+                    └─ job ──► dwell → LLM → think → type → fill
+                                → [human submit | auto click]
+                                → record dist + banGuard
+                                └── budget / gap / 1-per-thread ──► back feed
 ```
 
 ---
 
-## 10. English summary (modes)
+## 12. English summary (modes)
 
 ### Observe
 Human-like feed scrolling only. Pause duration scales with post text length (skim on long posts). Config parameters drift over time. **No** votes, **no** comments.
@@ -496,36 +562,43 @@ Everything in Observe, plus:
 ### Full
 Everything in Engage, plus:
 - On post pages, may start a **single-flight CommentJob**  
-- Prefer high-engagement and **question-bearing** targets  
-- LLM draft → simulated think + **typing time ∝ words/WPM** → detect field → fill → click Comment/Reply  
-- Hard rate limits (per hour/session/gap) and one comment per thread per session  
+- Prefer high-engagement, **question-bearing**, and **promo-invite** targets  
+- LLM draft → simulated think + **typing time ∝ words/WPM** → detect field → fill → click Comment/Reply (or human-submit-only)  
+- Hard rate limits + **distribution** (daily/sub quotas, quiet hours, queue, session max) + **ban-guard** (9:1, velocity)  
+- One comment per thread per session  
 
 ### Why uneven rhythm
 Fixed intervals and fixed scroll deltas are easy bot fingerprints. RGL uses normal/log-ish distributions, energy drift, micro-drift of live config, long-tail pauses, reverse scrolls, and content-dependent dwell/typing so timing never stays periodic.
 
 ---
 
-## 11. File tham chiếu trong repo
+## 13. File tham chiếu trong repo
 
 | File | Nội dung |
 |------|----------|
+| `content/00-shared.js` | DEFAULTS, RNG, promo detect |
+| `content/08-ban-guard.js` | 9:1 / velocity gates |
 | `content/10-automation.js` | Scroll, dwell, upvote, drift |
+| `content/12-distribution.js` | Queue, quotas, quiet hours |
 | `content/30-auto-comment.js` | Job score + typing + submit |
-| `content/40-orchestrator.js` | Mode loops |
+| `content/40-orchestrator.js` | Mode loops + Dist messages |
 | `content/05-overlay.js` | Overlay render |
 | `background-llm.js` | Prompt / generate |
 | `README.md` | Cài đặt nhanh + Tailscale |
-| `docs/OVERLAY_UI_PROMPT_FOR_CLAUDE.md` | Design prompt overlay |
+| `docs/DISTRIBUTION.md` | Dist tab guide |
+| `docs/ANTI_SHADOWBAN.md` | Ban-guard |
+| `docs/THREAT_AUDIT.md` | Fingerprint audit |
 
 ---
 
-## 12. Cảnh báo
+## 14. Cảnh báo
 
 1. Auto upvote + auto comment = **vote/comment manipulation risk**.  
 2. Dùng **account phụ**, cap thấp, Observe trước khi Full.  
 3. Không merge logic auto-vote/comment ngược vào Bravestep production (đã từ chối HITL-only).  
-4. Reddit đổi DOM → fill/submit có thể FAIL (overlay hiện error, fail-soft).
+4. Reddit đổi DOM → fill/submit có thể FAIL (overlay hiện error, fail-soft).  
+5. Distribution + ban-guard **giảm tốc độ** — không che synthetic `isTrusted`.
 
 ---
 
-*Tài liệu đồng bộ codebase Reddit Growth Lab. Cập nhật khi đổi algorithm mode/scoring/latency.*
+*Tài liệu đồng bộ codebase Reddit Growth Lab **v2.1.0**. Cập nhật khi đổi algorithm mode/scoring/latency/distribution.*

@@ -1,7 +1,9 @@
-# Audit rủi ro phát hiện — Reddit Growth Lab (v2.0.14)
+# Audit rủi ro phát hiện — Reddit Growth Lab (v2.1.0)
 
 Đối chiếu code extension với mô hình đa tín hiệu (fingerprint + behavior + account).  
 **Không** phải pen-test Reddit. Mục tiêu: chỉ ra extension **đang tạo tín hiệu gì**, mức độ, và mitigation.
+
+> Cập nhật v2.1: stealth UI, session max, human-submit-only, sub lock, draft dedupe, distribution quotas — xem [DISTRIBUTION.md](./DISTRIBUTION.md).
 
 ## Tóm tắt executive
 
@@ -28,8 +30,8 @@
 
 Reddit **có thể** không “đọc” chrome.storage, nhưng **có thể** quan sát DOM/behavior. Overlay + Bram **rất dễ** fingerprint nếu họ so DOM tree / mutation pattern.
 
-**Mitigation hiện có:** Không ẩn UI.  
-**Nên:** Mode “stealth” ẩn overlay/mascot khi Full; randomize class names (khó hơn reverse).
+**Mitigation hiện có (v2.1):** `rgl_stealthUi` → class `html.rgl-stealth` làm mờ mascot/overlay (opacity thấp).  
+**Vẫn còn:** Class prefix `rch-`/`rgl-` cố định; randomize class names (khó reverse) chưa làm.
 
 ### 1.2 Canvas / WebGL / Audio fingerprint 🟢
 
@@ -188,18 +190,25 @@ Account signal: karma/history/email — extension **không** sửa được.
 |------|---------|
 | Observe | Warm-up, chỉ dwell |
 | Engage | Thêm upvote **thưa**, account đã có karma |
-| Full | Comment thưa; seed **chỉ** promo-invite; tắt auto-submit nếu muốn an toàn hơn |
-| Stealth (chưa có) | Ẩn Bram/overlay khi auto |
+| Full | Comment thưa; seed **chỉ** promo-invite; bật Dist quotas |
+| Full + human submit | An toàn hơn: fill xong, **bạn** bấm Comment |
+| Stealth | `rgl_stealthUi` — mờ Bram/overlay khi auto |
 
-### Khuyến nghị product (nếu muốn harden tiếp)
+### Đã ship harden (v2.1) ✅
 
-1. **Stealth UI** — không inject mascot/overlay khi `rgl_stealth=true`  
-2. **Session budget** — max phút/ngày, force OFF  
-3. **Human submit only** — auto draft+fill, user bấm Comment  
-4. **Draft dedupe global** — hash cross-session  
-5. **Sub lock** — không nhảy r/all/popular  
-6. **Disable auto-upvote** option default ON for safety  
+1. **Stealth UI** — `rgl_stealthUi`  
+2. **Session max phút** — `rgl_sessionMaxMinutes` → force OFF  
+3. **Human submit only** — `rgl_humanSubmitOnly`  
+4. **Draft hash dedupe** — `rgl_draftHashes`  
+5. **Sub lock / allowlist** — `rgl_stayInSub`, allowlist/blocklist  
+6. **Day/sub quotas + quiet hours + queue** — tab Dist  
+
+### Vẫn mở (nếu harden tiếp)
+
+1. Randomize class names / không inject DOM khi stealth hard  
+2. Disable auto-upvote default ON (opt-in upvote)  
+3. Trusted-path automation (không khả thi thuần extension)  
 
 ---
 
-*Audit tĩnh codebase. Không claim bypass Reddit. Cập nhật khi đổi pipeline Full/fill/vote.*
+*Audit tĩnh codebase. Không claim bypass Reddit. Cập nhật v2.1.0 khi ship distribution layer.*
