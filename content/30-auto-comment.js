@@ -242,12 +242,16 @@
       // 70% reply (questions or promo in comment), 30% OP
       const wantReply = Math.random() < 0.7;
       if (wantReply && RGL.assist) {
-        const comments = [
-          ...(document.querySelectorAll("shreddit-comment, .comment") || []),
-        ].filter((c) => {
-          const r = c.getBoundingClientRect();
-          return r.height > 40 && r.bottom > 0 && r.top < window.innerHeight;
-        });
+        const commentSel =
+          "shreddit-comment, div[data-testid='comment'], .Comment, div.thing.comment, article[id^='t1_'], .comment";
+        const comments = [...(document.querySelectorAll(commentSel) || [])]
+          .filter((c) => {
+            // Prefer shreddit host when both wrap the same node
+            if (c.tagName !== "SHREDDIT-COMMENT" && c.closest?.("shreddit-comment")) return false;
+            if (RGL.assist?.isAutoModeratorComment?.(c)) return false;
+            const r = c.getBoundingClientRect();
+            return r.height > 40 && r.bottom > 0 && r.top < window.innerHeight;
+          });
         const ranked = comments
           .map((c) => {
             const cctx = RGL.assist.commentContext(c);

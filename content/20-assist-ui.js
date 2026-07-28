@@ -1403,88 +1403,232 @@
     const label = "📝 POST" + (images.length ? ` · 🖼 ${images.length}` : "") + (questions.length ? ` · 🎯 ${questions.length} câu hỏi` : "");
     return { title: t, body: body.slice(0, 1500), subreddit: sub, topComments, images, questions, lang: detectLang(t + " " + body), target: { kind: "post", label, author: "" } };
   }
+  // Comment hosts Reddit currently uses across old/new UI (shared by context + inject).
+  const COMMENT_HOST_SEL =
+    "shreddit-comment, div[data-testid='comment'], .Comment, div.thing.comment, article[id^='t1_']";
+  const COMMENT_OWNER_SEL =
+    "shreddit-comment, div[data-testid='comment'], .Comment, div.thing.comment, article[id^='t1_'], .comment";
+  const POST_OWNER_SEL = "shreddit-post, .thing.link, [data-testid='post-container']";
+
   function commentDepth(el) {
-    if (el.tagName === "SHREDDIT-COMMENT") return Number(el.getAttribute("depth") || 0);
-    let d = 0, p = el.parentElement; while (p) { if (p.classList?.contains("comment")) d++; p = p.parentElement; } return d;
+    if (el.tagName === "SHREDDIT-COMMENT") {
+      const attr = el.getAttribute("depth");
+      if (attr != null && attr !== "") return Number(attr) || 0;
+    }
+    let d = 0;
+    let p = el.parentElement;
+    while (p) {
+      if (p.matches?.(COMMENT_OWNER_SEL) || p.classList?.contains("comment")) d++;
+      p = p.parentElement;
+    }
+    return d;
   }
+
+  function commentBodyNodes(commentEl) {
+    // Prefer own slot/body, not nested child comments' text
+    const sels = ['[slot="comment"]', ".usertext-body", ".md", "[data-testid='comment']"];
+    const own = [];
+    const collect = (root) => {
+      if (!root?.querySelectorAll) return;
+      for (const sel of sels) {
+        root.querySelectorAll(sel).forEach((n) => {
+          const owner = n.closest?.(COMMENT_OWNER_SEL) || commentEl;
+          if (owner !== commentEl) return;
+          const t = clean(n.textContent);
+          if (t) own.push({ el: n, t });
+        });
+        if (own.length) return;
+      }
+    };
+    collect(commentEl);
+    if (!own.length) collect(commentEl.shadowRoot);
+    // Nested replies under this comment (for context when replying to parent)
+    const nested = [];
+    commentEl.querySelectorAll?.(COMMENT_HOST_SEL).forEach((child) => {
+      if (child === commentEl) return;
+      // Only direct-ish children in the tree under this host
+      const parentHost = child.parentElement?.closest?.(COMMENT_OWNER_SEL);
+      if (parentHost && parentHost !== commentEl) return;
+      const t =
+        clean(child.querySelector?.('[slot="comment"], .usertext-body, .md')?.textContent) ||
+        clean(child.shadowRoot?.querySelector?.('[slot="comment"], .md')?.textContent) ||
+        "";
+      if (t) nested.push(t.slice(0, 240));
+    });
+    return {
+      ownText: own[0]?.t || "",
+      nestedTexts: nested.slice(0, 20),
+    };
+  }
+
   function commentContext(commentEl) {
     const base = postContext(null);
-    const isShreddit = commentEl.tagName === "SHREDDIT-COMMENT";
-    const sel = isShreddit ? '[slot="comment"]' : ".usertext-body";
-    const bodies = [...commentEl.querySelectorAll(sel)].map((n) => clean(n.textContent)).filter(Boolean);
-    const author = isShreddit ? commentEl.getAttribute("author") || "" : clean(commentEl.querySelector(".author")?.textContent);
+    const { ownText, nestedTexts } = commentBodyNodes(commentEl);
+    const author = commentAuthor(commentEl);
     const depth = commentDepth(commentEl);
-    const nReplies = Math.max(0, bodies.length - 1);
-    const replyingTo = bodies[0] || "";
+    const nReplies = nestedTexts.length;
+    const replyingTo = ownText || "";
     const qOwn = extractQuestions(replyingTo);
     const questions = qOwn.length ? qOwn : base.questions;
-    const label = (depth > 0 ? `↳ SUB-REPLY (cấp ${depth})` : "💬 REPLY") + (nReplies ? ` · ${nReplies} reply` : "") + (qOwn.length ? ` · 🎯 ${qOwn.length} câu hỏi` : "");
-    return { ...base, replyingTo, replyAuthor: author, subReplies: bodies.slice(1, 21), questions, lang: detectLang(replyingTo) || base.lang, target: { kind: "comment", label, author } };
+    const label =
+      (depth > 0 ? `↳ SUB-REPLY (cấp ${depth})` : "💬 REPLY") +
+      (nReplies ? ` · ${nReplies} reply` : "") +
+      (qOwn.length ? ` · 🎯 ${qOwn.length} câu hỏi` : "");
+    return {
+      ...base,
+      replyingTo,
+      replyAuthor: author,
+      subReplies: nestedTexts,
+      questions,
+      lang: detectLang(replyingTo) || base.lang,
+      target: { kind: "comment", label, author },
+    };
   }
 
   // ── inject buttons ─────────────────────────────────────────────────────────
+  function isOwnedBy(host, el) {
+    if (!el) return false;
+    const owner = el.closest?.(COMMENT_OWNER_SEL + "," + POST_OWNER_SEL);
+    return owner === host;
+  }
+
+  function matchAction(el, wordRe) {
+    if (!el) return false;
+    const bits = [
+      el.getAttribute?.("aria-label") || "",
+      el.getAttribute?.("data-post-click-location") || "",
+      el.getAttribute?.("data-testid") || "",
+      el.getAttribute?.("name") || "",
+      clean(el.textContent || "").slice(0, 80),
+    ].join(" ");
+    return wordRe.test(bits);
+  }
+
+  // Walk light + open shadow roots (depth-limited) to find Reply/Share controls.
+  // Nested child comments are excluded via ownership so parent inject stays clean.
+  function scanActionControls(root, wordRe, host, depth = 0) {
+    if (!root || depth > 5) return null;
+    const cands = root.querySelectorAll?.("button, a, faceplate-tracker, [role='button']") || [];
+    for (const c of cands) {
+      if (host && root === host && !isOwnedBy(host, c) && c.getRootNode?.() === document) continue;
+      if (matchAction(c, wordRe)) return c;
+    }
+    // Nested shadow roots (faceplate-button etc.)
+    const all = root.querySelectorAll?.("*") || [];
+    for (const el of all) {
+      if (!el.shadowRoot) continue;
+      // Don't descend into nested comment hosts' shadows from a parent scan of light children
+      if (host && el !== host && el.matches?.(COMMENT_OWNER_SEL) && el !== host) continue;
+      const hit = scanActionControls(el.shadowRoot, wordRe, host, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   function actionAnchor(host, wordRe) {
-    const ownerSelector = host.matches?.("shreddit-comment,.comment") ? "shreddit-comment,.comment" : "shreddit-post,.thing.link";
+    const ownerSelector = host.matches?.(COMMENT_OWNER_SEL) ? COMMENT_OWNER_SEL : POST_OWNER_SEL;
     const list = [...(host.querySelectorAll?.(".flat-list.buttons") || [])]
       .find((candidate) => candidate.closest(ownerSelector) === host);
-    if (list) { const li = [...list.children].find((c) => wordRe.test(c.className) || wordRe.test(c.textContent || "")); return { after: li || list.lastElementChild, container: list, old: true }; }
-    const scan = (rootEl) => {
-      if (!rootEl) return null;
-      const cands = [...rootEl.querySelectorAll("button, a, faceplate-tracker")];
-      return cands.find((c) => wordRe.test(c.getAttribute("aria-label") || "") ||
-        wordRe.test(c.getAttribute("data-post-click-location") || "") ||
-        wordRe.test(c.getAttribute("data-testid") || "") ||
-        wordRe.test(clean(c.textContent || "").slice(0, 80)));
-    };
-    const inShadow = scan(host.shadowRoot); if (inShadow) return { after: inShadow, container: inShadow.parentElement, shadow: true };
-    const inLight = [...host.querySelectorAll?.("button, a, faceplate-tracker") || []].find((candidate) => {
-      if (candidate.closest(ownerSelector) !== host) return false;
-      return wordRe.test(candidate.getAttribute("aria-label") || "") ||
-        wordRe.test(candidate.getAttribute("data-post-click-location") || "") ||
-        wordRe.test(candidate.getAttribute("data-testid") || "") ||
-        wordRe.test(clean(candidate.textContent || "").slice(0, 80));
-    });
+    if (list) {
+      const li = [...list.children].find((c) => wordRe.test(c.className) || wordRe.test(c.textContent || ""));
+      return { after: li || list.lastElementChild, container: list, old: true };
+    }
+    const inShadow = scanActionControls(host.shadowRoot, wordRe, host);
+    if (inShadow) return { after: inShadow, container: inShadow.parentElement, shadow: true };
+    const inLight = scanActionControls(host, wordRe, host);
     if (inLight) return { after: inLight, container: inLight.parentElement };
     return null;
   }
+
+  function queryOwn(host, selector) {
+    const out = [];
+    const pushMatches = (root) => {
+      if (!root?.querySelectorAll) return;
+      root.querySelectorAll(selector).forEach((n) => out.push(n));
+    };
+    pushMatches(host);
+    pushMatches(host.shadowRoot);
+    return out;
+  }
+
   function ownContentElement(host, kind) {
     const selector = kind === "comment"
-      ? '[slot="comment"],.entry,.usertext-body'
+      ? '[slot="comment"],.entry,.usertext-body,[data-testid="comment"],.md'
       : '[slot="text-body"],.entry,.usertext-body';
-    return [...(host.querySelectorAll?.(selector) || [])]
-      .filter((candidate) => candidate.closest?.("shreddit-comment,.comment") === host)
-      .sort((a, b) => {
-        const rank = (el) => el.matches?.('[slot="comment"],[slot="text-body"]') ? 0 : el.matches?.(".entry") ? 1 : 2;
-        return rank(a) - rank(b);
-      })[0] || null;
+    const nodes = queryOwn(host, selector).filter((candidate) => {
+      // Prefer nodes that belong to this host, not a nested child comment
+      const nested = candidate.closest?.(COMMENT_OWNER_SEL);
+      if (nested && nested !== host) return false;
+      return true;
+    });
+    return nodes.sort((a, b) => {
+      const rank = (el) =>
+        el.matches?.('[slot="comment"],[slot="text-body"]') ? 0
+          : el.matches?.(".entry,.usertext-body") ? 1
+            : el.matches?.(".md") ? 2
+              : 3;
+      return rank(a) - rank(b);
+    })[0] || null;
   }
-  function fallbackTriggerRow(host, kind) {
+
+  function makeTriggerRow() {
     const row = document.createElement("div");
     row.className = "rch-trigger-row";
-    row.setAttribute("style", "display:flex;align-items:center;width:fit-content;margin:8px 0 4px;position:relative;z-index:2;");
+    row.setAttribute(
+      "style",
+      "display:flex;align-items:center;width:fit-content;margin:6px 0 4px;position:relative;z-index:2;"
+    );
+    return row;
+  }
+
+  function fallbackTriggerRow(host, kind) {
+    const row = makeTriggerRow();
     const ownContent = ownContentElement(host, kind);
     if (ownContent) {
-      // Keep the fallback inside the owner's visible content slot. A collapsed
-      // or hidden comment then hides its trigger too, instead of leaking a row
-      // into the parent thread and creating an ambiguous vertical stack.
+      // Keep the fallback inside the owner's visible content. Collapsed comments
+      // then hide their trigger too, instead of leaking into the parent thread.
       ownContent.appendChild(row);
       return row;
     }
-    if (kind === "comment") return null;
+    // Nested OP replies / new Reddit variants often keep body only in shadow
+    // or rebuild action rows — always leave a light-DOM row on the host so the
+    // button survives and is still clickable.
     const boundary = [...(host.children || [])].find((child) =>
-      child.matches?.('shreddit-comment,.comment,.child,[slot="children"],shreddit-composer,[data-testid="comment-submission-form"]')
+      child.matches?.(
+        'shreddit-comment,div[data-testid="comment"],.Comment,.comment,.child,[slot="children"],shreddit-composer,[data-testid="comment-submission-form"]'
+      )
     );
     if (boundary) host.insertBefore(row, boundary);
     else host.appendChild(row);
     return row;
   }
+
+  function hasTrigger(host) {
+    if (host.querySelector?.(".rch-trigger, .rch-trigger-row")) return true;
+    if (host.shadowRoot?.querySelector?.(".rch-trigger, .rch-trigger-row")) return true;
+    return false;
+  }
+
+  /** @returns {boolean} whether the button is in the live DOM */
   function place(host, btn, wordRe, kind) {
     const a = actionAnchor(host, wordRe);
-    if (a && a.old) { const li = document.createElement("li"); li.appendChild(btn); a.after ? a.after.insertAdjacentElement("afterend", li) : a.container.appendChild(li); return; }
-    if (a && a.after) { a.after.insertAdjacentElement("afterend", btn); return; }
-    // Closed/unavailable action rows still get a target-local normal-flow row.
-    // For comments this row sits after that comment's own body, never above it
-    // and never inside a nested child comment.
+    try {
+      if (a && a.old) {
+        const li = document.createElement("li");
+        li.appendChild(btn);
+        if (a.after) a.after.insertAdjacentElement("afterend", li);
+        else a.container.appendChild(li);
+        return !!btn.isConnected;
+      }
+      // Prefer light-DOM fallback for comments: shadow action bars re-render and
+      // wipe injects (nested OP replies are the usual casualty). Posts still sit
+      // next to Share when available.
+      if (a && a.after && !(kind === "comment" && a.shadow)) {
+        a.after.insertAdjacentElement("afterend", btn);
+        if (btn.isConnected) return true;
+      }
+    } catch (_) { /* fall through to row */ }
+
     btn.classList.add("rch-fallback");
     btn.style.position = "static";
     btn.style.display = "inline-flex";
@@ -1496,43 +1640,130 @@
       btn.style.cursor = "wait";
     }
     const row = fallbackTriggerRow(host, kind);
-    if (row) row.appendChild(btn);
-    else btn.remove();
+    if (row) {
+      row.appendChild(btn);
+      return !!btn.isConnected;
+    }
+    btn.remove();
+    return false;
   }
+
+  function commentAuthor(commentEl) {
+    if (commentEl.tagName === "SHREDDIT-COMMENT") {
+      return commentEl.getAttribute("author") || commentEl.getAttribute("author-name") || "";
+    }
+    return clean(
+      commentEl.getAttribute("author") ||
+        commentEl.getAttribute("data-author") ||
+        commentEl.querySelector?.("a[href*='/user/'], a.author, [data-testid='comment_author_link']")?.textContent ||
+        ""
+    );
+  }
+
   function isAutoModeratorComment(commentEl) {
-    const isShreddit = commentEl.tagName === "SHREDDIT-COMMENT";
-    const author = isShreddit
-      ? commentEl.getAttribute("author") || commentEl.getAttribute("author-name") || ""
-      : clean(commentEl.querySelector(".author")?.textContent || commentEl.getAttribute("data-author") || "");
-    return author.replace(/^u\//i, "").trim().toLowerCase() === "automoderator";
+    return commentAuthor(commentEl).replace(/^u\//i, "").trim().toLowerCase() === "automoderator";
   }
+
+  function isPromotedComment(commentEl) {
+    if (commentEl.getAttribute?.("is-ad") === "true") return true;
+    if (commentEl.hasAttribute?.("promoted")) return true;
+    if (commentEl.getAttribute?.("data-promoted") === "true") return true;
+    // Promoted units sometimes sit as generic articles with a "Promoted" badge
+    const badge = clean(
+      commentEl.querySelector?.("[id*='promoted'], .promoted-label, span")?.textContent || ""
+    ).slice(0, 40);
+    if (/^promoted$/i.test(badge)) return true;
+    const slice = clean(commentEl.textContent || "").slice(0, 120);
+    return /\bpromoted\b/i.test(slice) && /learn more|shop now|install/i.test(slice);
+  }
+
+  function collectCommentHosts(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const list = [...(root.querySelectorAll?.(COMMENT_HOST_SEL) || [])];
+    // De-dupe: prefer outer shreddit-comment over nested testid clones
+    const seen = new Set();
+    const out = [];
+    for (const el of list) {
+      if (seen.has(el)) continue;
+      // Skip non-shreddit nodes that live inside a shreddit-comment we already handle
+      if (el.tagName !== "SHREDDIT-COMMENT" && el.closest?.("shreddit-comment")) continue;
+      seen.add(el);
+      out.push(el);
+    }
+    return out;
+  }
+
   function injectPosts(scope) {
-    (scope.querySelectorAll?.("shreddit-post:not([data-rchp]), .thing.link:not([data-rchp])") || []).forEach((postEl) => {
-      postEl.setAttribute("data-rchp", "1");
+    const root = scope && scope.querySelectorAll ? scope : document;
+    (root.querySelectorAll?.("shreddit-post, .thing.link, [data-testid='post-container']") || []).forEach((postEl) => {
+      if (hasTrigger(postEl)) {
+        postEl.setAttribute("data-rchp", "1");
+        return;
+      }
+      postEl.removeAttribute("data-rchp");
       const btn = mkBtn("Comment", "Soạn comment cho post này");
-      btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openPanel(postContext(postEl), postEl); };
-      place(postEl, btn, /share/i, "post");
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPanel(postContext(postEl), postEl);
+      };
+      if (place(postEl, btn, /share/i, "post")) postEl.setAttribute("data-rchp", "1");
     });
   }
+
   function injectComments(scope) {
-    (scope.querySelectorAll?.("shreddit-comment:not([data-rchc]), .comment:not([data-rchc])") || []).forEach((cEl) => {
-      cEl.setAttribute("data-rchc", "1");
-      if (isAutoModeratorComment(cEl)) return;
+    collectCommentHosts(scope).forEach((cEl) => {
+      if (isAutoModeratorComment(cEl) || isPromotedComment(cEl)) {
+        cEl.setAttribute("data-rchc", "skip");
+        return;
+      }
+      // Already has a live trigger (shadow may have re-rendered and wiped it)
+      if (hasTrigger(cEl)) {
+        cEl.setAttribute("data-rchc", "1");
+        return;
+      }
+      // Stale mark without button → allow retry
+      cEl.removeAttribute("data-rchc");
       const btn = mkBtn("Reply", "Reply comment này — đọc comment + reply bên dưới");
-      btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openPanel(commentContext(cEl), cEl); };
-      place(cEl, btn, /reply|share/i, "comment");
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPanel(commentContext(cEl), cEl);
+      };
+      // Prefer Reply; Share/Award as secondary anchors on stripped action bars
+      if (place(cEl, btn, /reply|share|award/i, "comment")) cEl.setAttribute("data-rchc", "1");
     });
   }
-  function injectAll(scope = document) { try { injectPosts(scope); injectComments(scope); } catch (_) {} }
+
+  function injectAll(scope = document) {
+    try {
+      injectPosts(scope);
+      injectComments(scope);
+    } catch (_) {}
+  }
 
   ensureMascot();
   injectAll();
-  [350, 1200, 2500, 5000].forEach((delay) => setTimeout(restorePendingFill, delay));
+  // Late-loading comment trees (expand / sort / infinite scroll) need extra passes
+  ;[350, 1200, 2500, 5000, 9000].forEach((delay) => {
+    setTimeout(() => {
+      if (!contextAlive()) return;
+      injectAll(document);
+      restorePendingFill();
+    }, delay);
+  });
   let queued = false;
   const obs = new MutationObserver(() => {
-    if (!contextAlive()) { try { obs.disconnect(); } catch (_) {} return; }
-    if (queued) return; queued = true;
-    setTimeout(() => { queued = false; injectAll(document); }, 400);
+    if (!contextAlive()) {
+      try { obs.disconnect(); } catch (_) {}
+      return;
+    }
+    if (queued) return;
+    queued = true;
+    setTimeout(() => {
+      queued = false;
+      injectAll(document);
+    }, 350);
   });
   obs.observe(document.body, { childList: true, subtree: true });
 
