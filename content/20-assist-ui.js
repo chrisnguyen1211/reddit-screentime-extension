@@ -1590,23 +1590,61 @@
     if (host) row.setAttribute("data-rch-for", hostUid(host));
     row.setAttribute(
       "style",
-      "display:flex;align-items:center;width:fit-content;margin:6px 0 4px;position:relative;z-index:2;"
+      "display:inline-flex;align-items:center;width:fit-content;margin:4px 8px 6px;position:relative;z-index:5;vertical-align:middle;"
     );
     return row;
   }
 
+  /** Visible vote/share action cluster — prefer this over text-body/media slots. */
+  function findActionCluster(host) {
+    const anchor = actionAnchor(host, /share|comment|upvote|vote/i);
+    if (anchor?.after?.parentElement) return { el: anchor.after, parent: anchor.after.parentElement, shadow: !!anchor.shadow };
+    // Light-DOM row of icon buttons under the post
+    const buttons = [...(host.querySelectorAll?.("button, a, faceplate-tracker") || [])].filter((el) => {
+      if (!isOwnedBy(host, el) && el.getRootNode?.() === document) return false;
+      return matchAction(el, /share|comment|upvote|award/i);
+    });
+    if (buttons[0]?.parentElement) return { el: buttons[0], parent: buttons[0].parentElement, shadow: false };
+    if (host.shadowRoot) {
+      const shBtn = [...host.shadowRoot.querySelectorAll("button, a, faceplate-tracker")].find((el) =>
+        matchAction(el, /share|comment|upvote|award/i)
+      );
+      if (shBtn?.parentElement) return { el: shBtn, parent: shBtn.parentElement, shadow: true };
+    }
+    return null;
+  }
+
   function fallbackTriggerRow(host, kind) {
     const row = makeTriggerRow(host);
+
+    // Posts: NEVER bury the button inside text-body / media (feed cards clip those
+    // slots → "some posts have the button, some don't"). Sit on the action bar.
+    if (kind === "post") {
+      const cluster = findActionCluster(host);
+      if (cluster?.parent) {
+        try {
+          if (cluster.el.nextSibling) cluster.parent.insertBefore(row, cluster.el.nextSibling);
+          else cluster.parent.appendChild(row);
+          return row;
+        } catch (_) { /* fall through */ }
+      }
+      // Host light DOM, before nested comments / below content
+      const boundary = [...(host.children || [])].find((child) =>
+        child.matches?.(
+          'shreddit-comment,div[data-testid="comment"],.Comment,.comment,.child,[slot="children"],shreddit-composer,[data-testid="comment-submission-form"]'
+        )
+      );
+      if (boundary) host.insertBefore(row, boundary);
+      else host.appendChild(row);
+      return row;
+    }
+
+    // Comments: prefer own body slot so collapsed threads hide the trigger too
     const ownContent = ownContentElement(host, kind);
     if (ownContent) {
-      // Keep the fallback inside the owner's visible content. Collapsed comments
-      // then hide their trigger too, instead of leaking into the parent thread.
       ownContent.appendChild(row);
       return row;
     }
-    // Nested OP replies / new Reddit variants often keep body only in shadow
-    // or rebuild action rows — always leave a light-DOM row on the host so the
-    // button survives and is still clickable.
     const boundary = [...(host.children || [])].find((child) =>
       child.matches?.(
         'shreddit-comment,div[data-testid="comment"],.Comment,.comment,.child,[slot="children"],shreddit-composer,[data-testid="comment-submission-form"]'
@@ -1690,7 +1728,7 @@
   function place(host, btn, wordRe, kind) {
     const id = hostUid(host);
     btn.setAttribute("data-rch-for", id);
-    // Hard guard: never place a second button for this host
+    // Hard guard: never place a second button for this host (uid-tracked)
     if (hasTrigger(host)) {
       try { btn.remove(); } catch (_) {}
       return true;
@@ -1703,11 +1741,12 @@
         li.appendChild(btn);
         if (a.after) a.after.insertAdjacentElement("afterend", li);
         else a.container.appendChild(li);
-        return !!btn.isConnected;
+        if (btn.isConnected) return true;
       }
-      // Comments: avoid wipeable shadow action bars.
-      // Posts: prefer in-host fallback so Share-adjacent flex rows can't stack forever.
-      if (a && a.after && kind === "comment" && !a.shadow) {
+      // Light-DOM action bar (Share/Reply): safe with data-rch-for dedupe.
+      // Shadow action bars re-render and wipe nodes — skip for both kinds and
+      // use the dedicated row path instead.
+      if (a && a.after && !a.shadow) {
         a.after.insertAdjacentElement("afterend", btn);
         if (btn.isConnected) return true;
       }
@@ -1716,7 +1755,7 @@
     btn.classList.add("rch-fallback");
     btn.style.position = "static";
     btn.style.display = "inline-flex";
-    btn.style.margin = "4px 0";
+    btn.style.margin = "4px 6px";
     if (scanInFlight) {
       btn.disabled = true;
       btn.setAttribute("aria-disabled", "true");
@@ -1729,8 +1768,14 @@
       row.appendChild(btn);
       return !!btn.isConnected;
     }
-    btn.remove();
-    return false;
+    // Absolute last resort — still on host, never into random slots
+    try {
+      host.appendChild(btn);
+      return !!btn.isConnected;
+    } catch (_) {
+      btn.remove();
+      return false;
+    }
   }
 
   function commentAuthor(commentEl) {
@@ -1780,14 +1825,24 @@
 
   function collectPostHosts(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
-    const list = [...(root.querySelectorAll?.("shreddit-post, .thing.link, [data-testid='post-container']") || [])];
+    const list = [
+      ...(root.querySelectorAll?.(
+        "shreddit-post, .thing.link, [data-testid='post-container'], article[id^='t3_'], faceplate-tracker[source*='post']"
+      ) || []),
+    ];
     const seen = new Set();
     const out = [];
     for (const el of list) {
       if (seen.has(el)) continue;
-      // Prefer shreddit-post; skip outer wrappers that only contain one
-      if (el.tagName !== "SHREDDIT-POST" && el.querySelector?.("shreddit-post")) continue;
-      if (el.classList?.contains("thing") === false && el.matches?.("[data-testid='post-container']") && el.closest?.("shreddit-post")) continue;
+      // Prefer shreddit-post host; skip outer wrappers that only wrap one
+      if (el.tagName !== "SHREDDIT-POST" && el.querySelector?.(":scope > shreddit-post, :scope shreddit-post")) {
+        // still allow if this node IS the interactive card without a shreddit-post child we can use
+        if (el.querySelector?.("shreddit-post")) continue;
+      }
+      if (el.closest?.("shreddit-post") && el.tagName !== "SHREDDIT-POST") continue;
+      // Skip tiny chrome / ads
+      const r = el.getBoundingClientRect?.();
+      if (r && r.height > 0 && r.height < 48) continue;
       seen.add(el);
       out.push(el);
     }
@@ -1797,10 +1852,13 @@
   function injectPosts(scope) {
     collectPostHosts(scope).forEach((postEl) => {
       hostUid(postEl);
-      if (dedupeTriggers(postEl) || hasTrigger(postEl)) {
+      dedupeTriggers(postEl);
+      if (hasTrigger(postEl)) {
         postEl.setAttribute("data-rchp", "1");
         return;
       }
+      // Stale mark without live button (virtualized feed recycled the node)
+      postEl.removeAttribute("data-rchp");
       const btn = mkBtn("Comment", "Soạn comment cho post này");
       btn.onclick = (e) => {
         e.preventDefault();
@@ -2048,6 +2106,20 @@
     }, 280);
   });
   obs.observe(document.documentElement || document.body, { childList: true, subtree: true });
+
+  // Feed virtualization: cards recycle as you scroll — re-check visible posts
+  let scrollQueued = false;
+  const onScrollInject = () => {
+    if (scrollQueued || !contextAlive()) return;
+    scrollQueued = true;
+    setTimeout(() => {
+      scrollQueued = false;
+      injectPosts(document);
+      injectComments(document);
+    }, 400);
+  };
+  window.addEventListener("scroll", onScrollInject, { passive: true, capture: true });
+  document.addEventListener("scroll", onScrollInject, { passive: true, capture: true });
 
   window.RGL = window.RGL || {};
   window.RGL.assist = {
