@@ -364,7 +364,9 @@
         ...ctx,
         style,
         instruction:
-          (kind === "comment" ? "reply naturally to this comment." : "comment helpfully on the post.") +
+          (kind === "comment"
+            ? "reply naturally to THIS parent comment only — stay on its topic and the post's subject; no off-topic jokes or quote-back."
+            : "comment helpfully on THIS post only — answer the actual question/topic; write as a regular of this subreddit; no off-topic analogies, no quote-back, no yeah/oof openers.") +
           seedHint,
       };
       RGL.assist?.setAutoPhase?.(useSeed ? "GENERATING · 🌱" : "GENERATING");

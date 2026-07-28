@@ -38,41 +38,66 @@ async function getConfig() {
   };
 }
 
-// Anti-AI-voice contract: the #1 way generated comments die on Reddit is READING
-// like AI (em dashes, listicles, tidy openers/closers). Ban the tells outright
-// and force mimicry of the thread's own commenters instead.
+// Anti-AI-voice + on-topic contract. Off-topic jokes (e.g. gym membership on a
+// school-dropout thread) and "oof yeah…" openers are the main failure modes.
 const ANTI_AI_STYLE = `
 STYLE — you are ONE more real person in this thread, not an AI and not a helpful assistant:
 - The comments above are your STYLE SAMPLES. Match their register, casing, length, slang, energy. Lowercase and loose if they are; careful if they are (then don't force slang).
-- MOVE — vary it, do NOT always assert an insight. A real person might ask a genuine question back, float a tentative suggestion (maybe try x, have you tried), just agree and add one small thing, share a quick personal bit, say they're not sure, or mildly push back. Sometimes the best comment is just a good question.
-- NOT A CONSULTANT — you're a peer in the thread, not an expert delivering a verdict or a solutions doc. React like a person first (oof, damn, wait what, that's rough) before any take. Do NOT build elaborate hypotheses about stuff you can't actually see (their exact architecture, internals, what really happened) — if you're guessing, guess casually the way a person would (wonder if it's just x?), not like a bug report. Even on technical/serious subs redditors are casual and blunt, formal is NOT stiff/corporate. Keep it short, usually one thought.
-- VOICE CALIBRATION (important, especially if you tend to write polished prose): type like you're on your phone, not writing an essay. lowercase is fine, fragments are fine, don't proofread it in your head. Compare:
+- MOVE — vary it, do NOT always assert an insight. A real person might ask a genuine question back, float a tentative suggestion (maybe try x, have you tried), just agree and add one small thing, share a quick personal bit ABOUT THE SAME TOPIC, say they're not sure, or mildly push back. Sometimes the best comment is just a good question.
+- NOT A CONSULTANT — you're a peer in the thread, not an expert delivering a verdict or a solutions doc. Do NOT build elaborate hypotheses about stuff you can't actually see (their exact architecture, internals, what really happened) — if you're guessing, guess casually the way a person would (wonder if it's just x?), not like a bug report. Even on technical/serious subs redditors are casual and blunt, formal is NOT stiff/corporate. Keep it short, usually one thought.
+- VOICE CALIBRATION: type like you're on your phone, not writing an essay. lowercase is fine, fragments are fine, don't proofread it in your head. Compare:
     too polished (NEVER): That would explain the behavior you're seeing. Worth reporting it to their team before it gets buried.
-    real person (YES): yeah thatd explain it. report it before it gets buried lol
-- VERNACULAR — type like a redditor. Contractions always. Where the vibe fits, drop casual stuff naturally: tbh, ngl, imo, fwiw, honestly, lowkey, kinda, imma, gonna, wanna, man, bro, dude, damn, fr, lol, haha, lmao, sheesh, oof, welp, ffs. Text emoticons are good when the mood fits: :) :( :/ ;) xD :P . Sprinkle, don't stack, only when it suits the thread.
+    real person (YES): thatd explain it. report it before it gets buried lol :)
+- HUMAN TEXTURE (do this often): real redditors leave fingerprints — text emoticons :) :( :/ ;) xD :P :') , tiny laugh particles (lol, lmao, haha), mild typos/missing apostrophes (dont, im, thats), short fragments. Prefer at least one of these in most drafts unless the thread is dead-serious. Sprinkle, don't stack five in one line.
+- VERNACULAR — contractions always. Casual where the vibe fits: tbh, ngl, imo, fwiw, honestly, lowkey, kinda, gonna, wanna, man, bro, dude, damn, fr, lol, haha, lmao, sheesh, welp, ffs. Do NOT lean on "yeah" or "oof" as crutches.
+- OPENERS BANNED (hard): never start with yeah / oof / oof yeah / oh yeah / damn yeah / nah yeah / "this" alone / "same" alone / "this is so true". Jump straight into your point or story.
+- NO QUOTE-BACK / NO PARAPHRASE: do not restate the title, do not echo their wording back at them ("dropping out of school…"), do not open by summarizing what they said. They already know their post. Answer or add from your angle.
 - BANNED — read as AI or as writing-not-talking:
   - characters: em dash, colons that set up a clause (no "heres the thing:" / "my take:"), double quotes, slashes joining words (write "founders or marketers", never "founders/marketers"; and/or becomes just or), semicolons, ellipses, bullets, numbered lists, headers, bold/italic. (ASCII emoticons above are FINE, not banned.)
   - phrases: Great question, Great point, Absolutely, It's worth noting, That said, In conclusion, Additionally, Moreover, Hope this helps, I'd recommend, game changer, dive into.
 - No tidy three-part parallel sentences. Real comments are uneven — vary length, can start mid-thought, don't cover everything.
-- FLEXIBLE: some comments are plain, some have a laugh or an emoticon or a filler. Not every comment needs them.
 - Output the comment text only, no wrapping quotes.`;
+
+// Light subreddit culture hints so the model posts as a member, not a tourist.
+// Unknown subs fall back to name-only inference in the prompt.
+const SUB_HINTS = {
+  ycombinator: "YC / startup founders — dropouts, funding, building products, batch culture, founder angst",
+  startups: "startup founders building companies — product, growth, fundraising, hiring",
+  saas: "SaaS builders — pricing, churn, GTM, MRR, product decisions",
+  micro_saas: "solo/micro SaaS builders shipping small products",
+  buildinpublic: "builders sharing progress publicly — shipping, metrics, lessons",
+  entrepreneur: "business builders and side projects",
+  growthhacking: "growth / distribution experiments",
+  cscareerquestions: "CS careers, school vs work, internships, jobs",
+  experienceddevs: "senior eng career/tech talk",
+  programming: "software engineering craft",
+  webdev: "web development practice",
+  machinelearning: "ML research/practice",
+  locality: "local community chat — match the place/culture",
+};
+
+function subHint(sub) {
+  if (!sub) return "";
+  const slug = String(sub).replace(/^r\//i, "").toLowerCase();
+  return SUB_HINTS[slug] || "";
+}
 
 // Per-comment brief pools — randomized each generation so drafts vary in length
 // and vibe instead of all converging to the same 1-3 sentence shape.
 const LENGTHS = {
-  short: "SHORT, one line, can be just a few words (like 'oof yeah been there' or 'wait what happened'), under ~12 words",
+  short: "SHORT, one line, a few words max (like 'wait what happened' or 'same boat tbh :/'), under ~12 words",
   medium: "a sentence or two, normal comment length",
   long: "a bit more developed, 2-4 uneven sentences, still casual",
 };
 const VIBES = {
-  react: "just react briefly and for real (lol/oof/damn/whoa + a short reaction), minimal",
-  question: "mainly ask ONE genuine curious question about their situation",
-  agree: "agree and add one small thing from your own angle",
-  story: "share a quick 'this happened to me too' personal bit",
-  skeptical: "be mildly skeptical or play devil's advocate, but chill about it",
-  humor: "lean into humor, a light joke or playful jab (only if the thread allows)",
-  tip: "give ONE concrete helpful tip, said plainly, no lecture",
-  hottake: "drop a short opinion or hot take",
+  react: "brief real reaction ON THE TOPIC (lol / damn / whoa + one on-topic beat), minimal — still about THIS post",
+  question: "mainly ask ONE genuine curious question about THEIR situation in the post",
+  agree: "agree and add one small on-topic thing from your angle",
+  story: "share a quick personal bit that is LITERALLY about the same subject as the post (same domain — school/startup/work/etc). NO cute analogies from unrelated life areas",
+  skeptical: "mildly skeptical or devil's advocate on the actual claim in the post, chill",
+  humor: "light humor or jab that still answers/engages the post topic — never a random off-topic joke",
+  tip: "ONE concrete helpful tip for the exact problem in the post, plain, no lecture",
+  hottake: "short opinion or hot take on the actual question/topic of the post",
 };
 const LENGTH_KEYS = ["short", "short", "medium", "medium", "long"]; // weighted shorter
 const VIBE_KEYS = Object.keys(VIBES);
@@ -80,7 +105,7 @@ const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
 function buildPrompt(cfg, ctx, brief) {
   const b = brief || { length: pick(LENGTH_KEYS), vibe: pick(VIBE_KEYS) };
-  const briefRule = `\nTHIS ONE (make it different from other comments): length ${LENGTHS[b.length] || LENGTHS.medium}; move = ${VIBES[b.vibe] || VIBES.react}. That's a lean, still fit the thread and stay real.\n`;
+  const briefRule = `\nTHIS ONE (make it different from other comments): length ${LENGTHS[b.length] || LENGTHS.medium}; move = ${VIBES[b.vibe] || VIBES.react}. Still stay 100% on-topic and real.\n`;
   const styleMode = ctx.style || cfg.style;
   const styleRule =
     styleMode === "soft_mention"
@@ -94,15 +119,31 @@ function buildPrompt(cfg, ctx, brief) {
   const langRule = ctx.lang
     ? `LANGUAGE (critical): write the ${isReply ? "reply" : "comment"} in ${ctx.lang} ONLY, matching the thread. Ignore the language of the product description and of these instructions.\n`
     : `LANGUAGE: write in the SAME language as the thread's title/body below — ignore the language of the product description.\n`;
-  // If the author literally asked something, that IS the assignment: answer/engage
-  // those questions, don't paraphrase the post back at them.
   // Free-text instruction from the user's box (rescan follows it).
   const instrRule = ctx.instruction && ctx.instruction.trim()
     ? `\nUSER INSTRUCTION for THIS draft (highest priority — follow it exactly): ${ctx.instruction.trim()}\n`
     : "";
   const anchorRule = ctx.questions && ctx.questions.length
-    ? `\nWHAT THEY'RE ACTUALLY ASKING — anchor the WHOLE comment on this. Directly answer or engage these specific questions; do NOT restate or summarize what they already wrote:\n- ${ctx.questions.join("\n- ")}\n`
+    ? `\nWHAT THEY'RE ACTUALLY ASKING — the WHOLE comment must answer or engage these. Direct reply; do NOT restate or summarize what they already wrote:\n- ${ctx.questions.join("\n- ")}\n`
+    : `\nTOPIC LOCK: engage the specific subject of the title/body (or the parent comment if replying). If it's a yes/no or experience question, answer with a real stance or experience on THAT subject — not a parallel joke from another domain.\n`;
+
+  // Subreddit culture: where you are posting matters as much as the title.
+  const hint = subHint(ctx.subreddit);
+  const subRule = ctx.subreddit
+    ? `\nWHERE YOU ARE POSTING (critical):\n` +
+      `- Subreddit: ${ctx.subreddit}${hint ? ` — ${hint}` : ""}\n` +
+      `- Write as a regular of this community: shared assumptions, jargon, and stakes of THIS sub.\n` +
+      `- Infer culture from the sub name when no hint is given (e.g. r/ycombinator = startup/YC world; r/relationships = personal advice; etc.).\n` +
+      `- Your comment must make sense ONLY in this sub + this post. If you could paste it under a random unrelated post, rewrite.\n`
     : "";
+
+  const topicRule =
+    `\nON-TOPIC HARD RULES (fail = bad comment):\n` +
+    `- Read title + body carefully. Name the real subject in your head before writing (e.g. "regretting dropping out of school for startups" — NOT fitness, dating, random life hacks).\n` +
+    `- Stay on that subject end-to-end. Personal stories must be the SAME domain (school, startup, career, etc. as the post), never a cute analogy from an unrelated domain (gym membership, Netflix, weather…).\n` +
+    `- Do NOT quote, rephrase, or open by echoing the post. Add something new: your experience, stance, question, or concrete take.\n` +
+    `- Humor/reaction still has to engage the actual question. Off-topic witty one-liners are worse than silence.\n`;
+
   const imgNote = ctx.imageData?.length
     ? `\nThis post has ${ctx.imageData.length} image(s) attached below — LOOK at them, they're the real content (the title alone isn't enough). Comment on what's actually in the image.${ctx.imageCaption ? ` (for reference they show: ${ctx.imageCaption})` : ""}\n`
     : ctx.imageCaption
@@ -122,22 +163,24 @@ function buildPrompt(cfg, ctx, brief) {
   }
 
   return (
-    `You are helping a real Redditor write a GENUINELY HELPFUL ${isReply ? "follow-up reply" : "comment"}.\n${who}\n` +
+    `You are helping a real Redditor write a GENUINELY HELPFUL ${isReply ? "follow-up reply" : "comment"} that belongs in this exact thread.\n${who}\n` +
     langRule +
     `THREAD:\nTitle: ${ctx.title}\n` +
     (ctx.body ? `Body: ${ctx.body}\n` : "") +
     (ctx.subreddit ? `Subreddit: ${ctx.subreddit}\n` : "") +
+    subRule +
+    topicRule +
     instrRule +
     anchorRule +
     imgNote +
     convo +
-    (!isReply && ctx.topComments?.length ? `\nExisting comments in this thread (context AND style samples — don't repeat their points):\n- ${ctx.topComments.join("\n- ")}\n` : "") +
+    (!isReply && ctx.topComments?.length ? `\nExisting comments in this thread (context AND style samples — don't repeat their points; use them to stay on-topic):\n- ${ctx.topComments.join("\n- ")}\n` : "") +
     `\nWrite a genuinely useful ${isReply ? "reply that adds something NEW to this subthread" : "comment"} in the same language as the thread. ` +
-    `Be specific, not generic. ${styleRule}\n${briefRule}${ANTI_AI_STYLE}`
+    `Be specific to THIS post and THIS sub, not generic. Prefer a human fingerprint (emoticon or lol/haha or a slight typo) unless the thread is solemn. ${styleRule}\n${briefRule}${ANTI_AI_STYLE}`
   );
 }
 
-// Deterministic scrub — strip AI tells the model leaks anyway.
+// Deterministic scrub — strip AI tells and banned openers the model leaks anyway.
 function scrub(text) {
   let t = text.trim();
   t = t.replace(/^["“”'`]+|["“”'`]+$/g, "");                    // wrapping quotes
@@ -156,6 +199,14 @@ function scrub(text) {
   t = t.replace(/\b([A-Za-z]{2,})\/([A-Za-z]{2,})\b/g, "$1 or $2");
   t = t.replace(/^(great (question|post|point)[.!,]?\s*)/i, "");
   t = t.replace(/\s*hope (this|that) helps[.!]?\s*$/i, "");
+  // Banned openers the model loves: "oof yeah…", "yeah,", "oof,"
+  t = t.replace(/^(oof\s+)?(oh\s+)?yeah[,!.]?\s+/i, "");
+  t = t.replace(/^oof[,!.]?\s+/i, "");
+  t = t.replace(/^(nah|yep|yup)\s+yeah[,!.]?\s+/i, "");
+  // Only strip hollow openers, not real content like "same boat tbh"
+  t = t.replace(/^(this is so true|so true)[,!.]?\s+/i, "");
+  t = t.replace(/^(this|same)[.!]\s*/i, "");
+  t = t.replace(/^(this|same)$/i, "");
   return t.replace(/[ \t]{2,}/g, " ").trim();
 }
 
