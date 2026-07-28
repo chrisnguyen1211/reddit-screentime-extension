@@ -1571,9 +1571,23 @@
     })[0] || null;
   }
 
-  function makeTriggerRow() {
+  // Stable id so we can find triggers even when Reddit places action bars
+  // outside the host node (Share-adjacent inject was spawning infinite buttons
+  // because hasTrigger only looked inside host).
+  let uidSeq = 0;
+  function hostUid(host) {
+    let id = host.getAttribute("data-rch-uid");
+    if (!id) {
+      id = `r${(++uidSeq).toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      host.setAttribute("data-rch-uid", id);
+    }
+    return id;
+  }
+
+  function makeTriggerRow(host) {
     const row = document.createElement("div");
     row.className = "rch-trigger-row";
+    if (host) row.setAttribute("data-rch-for", hostUid(host));
     row.setAttribute(
       "style",
       "display:flex;align-items:center;width:fit-content;margin:6px 0 4px;position:relative;z-index:2;"
@@ -1582,7 +1596,7 @@
   }
 
   function fallbackTriggerRow(host, kind) {
-    const row = makeTriggerRow();
+    const row = makeTriggerRow(host);
     const ownContent = ownContentElement(host, kind);
     if (ownContent) {
       // Keep the fallback inside the owner's visible content. Collapsed comments
@@ -1603,27 +1617,97 @@
     return row;
   }
 
+  function triggersFor(host) {
+    if (!host) return [];
+    const id = host.getAttribute("data-rch-uid");
+    const local = [
+      ...(host.querySelectorAll?.(".rch-trigger, .rch-trigger-row") || []),
+      ...(host.shadowRoot?.querySelectorAll?.(".rch-trigger, .rch-trigger-row") || []),
+    ];
+    // Also catch buttons inserted next to Share (may live outside host subtree)
+    const remote = id
+      ? [...document.querySelectorAll(`.rch-trigger[data-rch-for="${id}"], .rch-trigger-row[data-rch-for="${id}"]`)]
+      : [];
+    return [...new Set([...local, ...remote])].filter((el) => el?.isConnected);
+  }
+
   function hasTrigger(host) {
-    if (host.querySelector?.(".rch-trigger, .rch-trigger-row")) return true;
-    if (host.shadowRoot?.querySelector?.(".rch-trigger, .rch-trigger-row")) return true;
-    return false;
+    return triggersFor(host).some(
+      (el) => el.classList?.contains("rch-trigger") || !!el.querySelector?.(".rch-trigger")
+    );
+  }
+
+  /** Keep exactly one live button per host; remove the spam pile. */
+  function dedupeTriggers(host) {
+    const all = triggersFor(host);
+    const buttons = all.filter((el) => el.classList?.contains("rch-trigger"));
+    const rows = all.filter((el) => el.classList?.contains("rch-trigger-row"));
+    const keep = buttons[0] || null;
+    for (const b of buttons) {
+      if (b !== keep) {
+        try { b.remove(); } catch (_) {}
+      }
+    }
+    for (const r of rows) {
+      if (!r.querySelector?.(".rch-trigger")) {
+        try { r.remove(); } catch (_) {}
+      }
+    }
+    // Orphan spam without uid (from older buggy injects)
+    return !!keep?.isConnected;
+  }
+
+  /** Sweep global orphan Comment/Reply piles (no data-rch-for / disconnected host). */
+  function purgeOrphanTriggers() {
+    try {
+      const buttons = [...document.querySelectorAll(".rch-trigger")];
+      const byFor = new Map();
+      for (const b of buttons) {
+        const id = b.getAttribute("data-rch-for") || "";
+        if (!id) {
+          // Legacy untagged — remove extras, keep none if host unknown
+          try { b.remove(); } catch (_) {}
+          continue;
+        }
+        if (!byFor.has(id)) byFor.set(id, []);
+        byFor.get(id).push(b);
+      }
+      for (const [, list] of byFor) {
+        list.slice(1).forEach((b) => {
+          try { b.remove(); } catch (_) {}
+        });
+      }
+      // Empty rows
+      document.querySelectorAll(".rch-trigger-row").forEach((r) => {
+        if (!r.querySelector(".rch-trigger")) {
+          try { r.remove(); } catch (_) {}
+        }
+      });
+    } catch (_) {}
   }
 
   /** @returns {boolean} whether the button is in the live DOM */
   function place(host, btn, wordRe, kind) {
+    const id = hostUid(host);
+    btn.setAttribute("data-rch-for", id);
+    // Hard guard: never place a second button for this host
+    if (hasTrigger(host)) {
+      try { btn.remove(); } catch (_) {}
+      return true;
+    }
     const a = actionAnchor(host, wordRe);
     try {
       if (a && a.old) {
         const li = document.createElement("li");
+        li.setAttribute("data-rch-for", id);
         li.appendChild(btn);
         if (a.after) a.after.insertAdjacentElement("afterend", li);
         else a.container.appendChild(li);
         return !!btn.isConnected;
       }
-      // Prefer light-DOM fallback for comments: shadow action bars re-render and
-      // wipe injects (nested OP replies are the usual casualty). Posts still sit
-      // next to Share when available.
-      if (a && a.after && !(kind === "comment" && a.shadow)) {
+      // Comments: avoid wipeable shadow action bars.
+      // Posts: prefer in-host fallback so Share-adjacent flex rows can't stack forever.
+      if (a && a.after && kind === "comment" && !a.shadow) {
         a.after.insertAdjacentElement("afterend", btn);
         if (btn.isConnected) return true;
       }
@@ -1641,6 +1725,7 @@
     }
     const row = fallbackTriggerRow(host, kind);
     if (row) {
+      row.setAttribute("data-rch-for", id);
       row.appendChild(btn);
       return !!btn.isConnected;
     }
@@ -1693,21 +1778,39 @@
     return out;
   }
 
-  function injectPosts(scope) {
+  function collectPostHosts(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
-    (root.querySelectorAll?.("shreddit-post, .thing.link, [data-testid='post-container']") || []).forEach((postEl) => {
-      if (hasTrigger(postEl)) {
+    const list = [...(root.querySelectorAll?.("shreddit-post, .thing.link, [data-testid='post-container']") || [])];
+    const seen = new Set();
+    const out = [];
+    for (const el of list) {
+      if (seen.has(el)) continue;
+      // Prefer shreddit-post; skip outer wrappers that only contain one
+      if (el.tagName !== "SHREDDIT-POST" && el.querySelector?.("shreddit-post")) continue;
+      if (el.classList?.contains("thing") === false && el.matches?.("[data-testid='post-container']") && el.closest?.("shreddit-post")) continue;
+      seen.add(el);
+      out.push(el);
+    }
+    return out;
+  }
+
+  function injectPosts(scope) {
+    collectPostHosts(scope).forEach((postEl) => {
+      hostUid(postEl);
+      if (dedupeTriggers(postEl) || hasTrigger(postEl)) {
         postEl.setAttribute("data-rchp", "1");
         return;
       }
-      postEl.removeAttribute("data-rchp");
       const btn = mkBtn("Comment", "Soạn comment cho post này");
       btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
         openPanel(postContext(postEl), postEl);
       };
-      if (place(postEl, btn, /share/i, "post")) postEl.setAttribute("data-rchp", "1");
+      if (place(postEl, btn, /share/i, "post")) {
+        dedupeTriggers(postEl);
+        postEl.setAttribute("data-rchp", "1");
+      }
     });
   }
 
@@ -1717,11 +1820,11 @@
       cEl.setAttribute("data-rchc", "skip");
       return false;
     }
-    if (hasTrigger(cEl)) {
+    hostUid(cEl);
+    if (dedupeTriggers(cEl) || hasTrigger(cEl)) {
       cEl.setAttribute("data-rchc", "1");
       return true;
     }
-    cEl.removeAttribute("data-rchc");
     const btn = mkBtn("Reply", "Reply comment này — đọc comment + reply bên dưới");
     btn.onclick = (e) => {
       e.preventDefault();
@@ -1730,6 +1833,7 @@
     };
     // Prefer Reply; Share/Award as secondary anchors on stripped action bars
     if (place(cEl, btn, /reply|share|award/i, "comment")) {
+      dedupeTriggers(cEl);
       cEl.setAttribute("data-rchc", "1");
       return true;
     }
@@ -1840,46 +1944,58 @@
     return false;
   }
 
+  let injectBusy = false;
   function injectAll(scope = document) {
+    if (injectBusy) return;
+    injectBusy = true;
     try {
+      purgeOrphanTriggers();
       injectPosts(scope);
       injectComments(scope);
       ensurePermalinkTrigger();
-    } catch (_) {}
+    } catch (_) {
+      /* ignore */
+    } finally {
+      injectBusy = false;
+    }
   }
 
-  // Burst re-inject: notification deep-links hydrate comments after SPA paint
+  // Burst re-inject: notification deep-links hydrate comments after SPA paint.
+  // Keep this short — hasTrigger/dedupe prevent spam, but less churn is better.
   let burstTimer = 0;
   let burstGen = 0;
   function scheduleInjectBurst(reason) {
     if (!contextAlive()) return;
     const gen = ++burstGen;
-    const delays = [0, 150, 400, 900, 1600, 2800, 4500, 7000, 11000];
+    const delays =
+      reason === "nav"
+        ? [0, 200, 600, 1500, 3000, 6000]
+        : [0, 400, 1200, 3000, 7000];
     delays.forEach((delay) => {
       setTimeout(() => {
         if (!contextAlive() || gen !== burstGen) return;
         injectAll(document);
-        if (delay === 0 || delay === 900) restorePendingFill();
+        if (delay === 0 || delay === 1200 || delay === 1500) restorePendingFill();
       }, delay);
     });
-    // Keep a short poll while the notification target comment is still hydrating
+    // Poll only when URL points at a specific comment (inbox → comment)
+    const targetId = permalinkCommentId();
+    if (!targetId) return;
     const started = Date.now();
     clearInterval(burstTimer);
     burstTimer = setInterval(() => {
-      if (!contextAlive() || gen !== burstGen || Date.now() - started > 15000) {
+      if (!contextAlive() || gen !== burstGen || Date.now() - started > 12000) {
         clearInterval(burstTimer);
         burstTimer = 0;
         return;
       }
       injectAll(document);
-      const targetId = permalinkCommentId();
-      if (!targetId) return;
-      const el = findCommentById(targetId);
+      const el = findCommentById(permalinkCommentId());
       if (el && hasTrigger(el)) {
         clearInterval(burstTimer);
         burstTimer = 0;
       }
-    }, 700);
+    }, 900);
   }
 
   // Reddit is a SPA: notification clicks use history.pushState without reloading.
