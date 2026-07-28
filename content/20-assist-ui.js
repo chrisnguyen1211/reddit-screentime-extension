@@ -1711,47 +1711,213 @@
     });
   }
 
+  function injectOneComment(cEl) {
+    if (!cEl || !cEl.isConnected) return false;
+    if (isAutoModeratorComment(cEl) || isPromotedComment(cEl)) {
+      cEl.setAttribute("data-rchc", "skip");
+      return false;
+    }
+    if (hasTrigger(cEl)) {
+      cEl.setAttribute("data-rchc", "1");
+      return true;
+    }
+    cEl.removeAttribute("data-rchc");
+    const btn = mkBtn("Reply", "Reply comment này — đọc comment + reply bên dưới");
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openPanel(commentContext(cEl), cEl);
+    };
+    // Prefer Reply; Share/Award as secondary anchors on stripped action bars
+    if (place(cEl, btn, /reply|share|award/i, "comment")) {
+      cEl.setAttribute("data-rchc", "1");
+      return true;
+    }
+    return false;
+  }
+
   function injectComments(scope) {
-    collectCommentHosts(scope).forEach((cEl) => {
-      if (isAutoModeratorComment(cEl) || isPromotedComment(cEl)) {
-        cEl.setAttribute("data-rchc", "skip");
-        return;
+    collectCommentHosts(scope).forEach((cEl) => injectOneComment(cEl));
+  }
+
+  // Notification / "go to comment" deep-links:
+  //   /r/sub/comments/POST/slug/COMMENTID/
+  //   /comments/POST/COMMENTID/   (no slug)
+  //   ?comment=t1_xxx  or  #t1_xxx
+  function looksLikeRedditId(s) {
+    return !!s && !/[_-]/.test(s) && /^[a-z0-9]{5,12}$/i.test(s);
+  }
+  function permalinkCommentId() {
+    try {
+      const path = location.pathname.replace(/\/+$/, "");
+      const after = path.split(/\/comments\//i)[1];
+      if (after) {
+        // [postId, slug?, commentId?]
+        const parts = after.split("/").filter(Boolean);
+        if (parts.length >= 3 && looksLikeRedditId(parts[2])) return parts[2].toLowerCase();
+        // /comments/POST/COMMENT (no title slug)
+        if (parts.length === 2 && looksLikeRedditId(parts[0]) && looksLikeRedditId(parts[1])) {
+          return parts[1].toLowerCase();
+        }
       }
-      // Already has a live trigger (shadow may have re-rendered and wiped it)
-      if (hasTrigger(cEl)) {
-        cEl.setAttribute("data-rchc", "1");
-        return;
+      const m = path.match(/\/comment\/([a-z0-9]+)/i);
+      if (m && looksLikeRedditId(m[1])) return m[1].toLowerCase();
+      const q =
+        new URLSearchParams(location.search).get("comment") ||
+        new URLSearchParams(location.search).get("comment_id") ||
+        "";
+      if (q) {
+        const bare = q.replace(/^t1_/i, "");
+        if (looksLikeRedditId(bare)) return bare.toLowerCase();
       }
-      // Stale mark without button → allow retry
-      cEl.removeAttribute("data-rchc");
-      const btn = mkBtn("Reply", "Reply comment này — đọc comment + reply bên dưới");
-      btn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openPanel(commentContext(cEl), cEl);
-      };
-      // Prefer Reply; Share/Award as secondary anchors on stripped action bars
-      if (place(cEl, btn, /reply|share|award/i, "comment")) cEl.setAttribute("data-rchc", "1");
-    });
+      const hash = (location.hash || "").replace(/^#/, "");
+      if (/^t1_/i.test(hash)) return hash.replace(/^t1_/i, "").toLowerCase();
+    } catch (_) {}
+    return "";
+  }
+
+  function findCommentById(rawId) {
+    if (!rawId) return null;
+    const bare = String(rawId).replace(/^t1_/i, "").toLowerCase();
+    if (!bare) return null;
+    const sels = [
+      `shreddit-comment[thingid="t1_${bare}"]`,
+      `shreddit-comment[thingid="${bare}"]`,
+      `shreddit-comment[comment-id="${bare}"]`,
+      `shreddit-comment[comment-id="t1_${bare}"]`,
+      `shreddit-comment#t1_${bare}`,
+      `#t1_${bare}`,
+      `article[id="t1_${bare}"]`,
+      `div[id="t1_${bare}"]`,
+      `[data-fullname="t1_${bare}"]`,
+      `[data-comment-id="${bare}"]`,
+      `[data-comment-id="t1_${bare}"]`,
+    ];
+    for (const sel of sels) {
+      try {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        if (el.matches?.(COMMENT_OWNER_SEL)) return el;
+        const host = el.closest?.(COMMENT_OWNER_SEL);
+        if (host) return host;
+        return el;
+      } catch (_) {}
+    }
+    // Attribute scan — notification views sometimes delay full attributes
+    for (const el of document.querySelectorAll(COMMENT_HOST_SEL)) {
+      const blob = [
+        el.getAttribute("thingid"),
+        el.getAttribute("id"),
+        el.getAttribute("comment-id"),
+        el.getAttribute("data-fullname"),
+        el.getAttribute("data-comment-id"),
+        el.id,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (blob.includes(bare) || blob.includes(`t1_${bare}`)) return el;
+    }
+    // Highlighted/focused comment from notification (bg highlight, aria-current)
+    const focused =
+      document.querySelector("shreddit-comment[highlighted], shreddit-comment[is-highlighted], shreddit-comment.highlighted") ||
+      document.querySelector('[data-testid="comment"][aria-current="true"]') ||
+      document.querySelector("shreddit-comment:target, .Comment:target, article:target");
+    if (focused) return focused.closest?.(COMMENT_OWNER_SEL) || focused;
+    return null;
+  }
+
+  /** Force Reply on the deep-linked notification comment even if tree is sparse. */
+  function ensurePermalinkTrigger() {
+    const id = permalinkCommentId();
+    const el = findCommentById(id);
+    if (el) {
+      injectOneComment(el);
+      return !!hasTrigger(el);
+    }
+    // No id in URL but still a comments page — inject everything visible
+    if (/\/comments\//i.test(location.pathname)) injectComments(document);
+    return false;
   }
 
   function injectAll(scope = document) {
     try {
       injectPosts(scope);
       injectComments(scope);
+      ensurePermalinkTrigger();
     } catch (_) {}
   }
 
-  ensureMascot();
-  injectAll();
-  // Late-loading comment trees (expand / sort / infinite scroll) need extra passes
-  ;[350, 1200, 2500, 5000, 9000].forEach((delay) => {
-    setTimeout(() => {
-      if (!contextAlive()) return;
+  // Burst re-inject: notification deep-links hydrate comments after SPA paint
+  let burstTimer = 0;
+  let burstGen = 0;
+  function scheduleInjectBurst(reason) {
+    if (!contextAlive()) return;
+    const gen = ++burstGen;
+    const delays = [0, 150, 400, 900, 1600, 2800, 4500, 7000, 11000];
+    delays.forEach((delay) => {
+      setTimeout(() => {
+        if (!contextAlive() || gen !== burstGen) return;
+        injectAll(document);
+        if (delay === 0 || delay === 900) restorePendingFill();
+      }, delay);
+    });
+    // Keep a short poll while the notification target comment is still hydrating
+    const started = Date.now();
+    clearInterval(burstTimer);
+    burstTimer = setInterval(() => {
+      if (!contextAlive() || gen !== burstGen || Date.now() - started > 15000) {
+        clearInterval(burstTimer);
+        burstTimer = 0;
+        return;
+      }
       injectAll(document);
-      restorePendingFill();
-    }, delay);
-  });
+      const targetId = permalinkCommentId();
+      if (!targetId) return;
+      const el = findCommentById(targetId);
+      if (el && hasTrigger(el)) {
+        clearInterval(burstTimer);
+        burstTimer = 0;
+      }
+    }, 700);
+  }
+
+  // Reddit is a SPA: notification clicks use history.pushState without reloading.
+  // One-shot boot timeouts alone miss those navigations.
+  let lastHref = location.href;
+  function onSpaNavigate() {
+    if (!contextAlive()) return;
+    const now = location.href;
+    if (now === lastHref) return;
+    lastHref = now;
+    console.log("[RGL] SPA nav → re-inject triggers", now);
+    scheduleInjectBurst("nav");
+  }
+
+  try {
+    const _push = history.pushState.bind(history);
+    const _replace = history.replaceState.bind(history);
+    history.pushState = function patchedPush() {
+      const r = _push(...arguments);
+      queueMicrotask(onSpaNavigate);
+      return r;
+    };
+    history.replaceState = function patchedReplace() {
+      const r = _replace(...arguments);
+      queueMicrotask(onSpaNavigate);
+      return r;
+    };
+  } catch (_) {}
+  window.addEventListener("popstate", () => queueMicrotask(onSpaNavigate));
+  window.addEventListener("hashchange", () => queueMicrotask(onSpaNavigate));
+  // Fallback poll — Reddit sometimes mutates URL without going through our patch
+  setInterval(() => {
+    if (location.href !== lastHref) onSpaNavigate();
+  }, 800);
+
+  ensureMascot();
+  scheduleInjectBurst("boot");
+
   let queued = false;
   const obs = new MutationObserver(() => {
     if (!contextAlive()) {
@@ -1763,13 +1929,17 @@
     setTimeout(() => {
       queued = false;
       injectAll(document);
-    }, 350);
+    }, 280);
   });
-  obs.observe(document.body, { childList: true, subtree: true });
+  obs.observe(document.documentElement || document.body, { childList: true, subtree: true });
 
   window.RGL = window.RGL || {};
   window.RGL.assist = {
     injectAll,
+    injectOneComment,
+    ensurePermalinkTrigger,
+    permalinkCommentId,
+    findCommentById,
     openPanel,
     postContext,
     commentContext,
