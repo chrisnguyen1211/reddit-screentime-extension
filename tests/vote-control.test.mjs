@@ -34,21 +34,27 @@ describe("isVoteControl() — never park button next to votes", () => {
 });
 
 describe("placement contract in source", () => {
-  it("place() uses dedicated row and skips vote controls", () => {
+  it("place() stays inside host and uses stable entity keys", () => {
     const src = readSrc("content/20-assist-ui.js");
     assert.match(src, /isVoteControl/);
-    assert.match(src, /findSafeActionAnchor|fallbackTriggerRow/);
-    assert.match(src, /NEVER use a dedicated row|ALWAYS use a dedicated row|below the action bar/i);
-    // Must not re-introduce insert next to raw upvote via broad regex in findActionCluster
+    assert.match(src, /function entityKey/);
+    assert.match(src, /ALWAYS place the trigger row INSIDE the host|INSIDE the host node/i);
+    assert.match(src, /data-rch-entity/);
     assert.ok(
-      !/findActionCluster\(host,\s*\/share\|comment\|upvote/.test(src),
-      "old upvote-first cluster finder should be gone"
+      !/faceplate-tracker\[source\*=['\"]post['\"]\]/.test(src),
+      "faceplate-tracker post selector must stay removed (multi-button spam)"
     );
   });
 
-  it("injectComments covers nested shreddit-comment", () => {
+  it("injectComments only on /comments/ pages; nested still supported", () => {
     const src = readSrc("content/20-assist-ui.js");
-    assert.match(src, /nested shreddit-comment|every depth|SHREDDIT-COMMENT including nested/i);
-    assert.match(src, /requestAnimationFrame/);
+    assert.match(src, /\/comments\//);
+    assert.match(src, /never home\/popular\/sub feed|ONLY on full post pages|only on full post pages/i);
+    assert.match(src, /nested|SHREDDIT-COMMENT including nested|every depth/i);
+  });
+
+  it("purge strips reply triggers on feed", () => {
+    const src = readSrc("content/20-assist-ui.js");
+    assert.match(src, /data-rch-kind.*reply|kind === \"reply\"/);
   });
 });

@@ -1571,23 +1571,72 @@
     })[0] || null;
   }
 
-  // Stable id so we can find triggers even when Reddit places action bars
-  // outside the host node (Share-adjacent inject was spawning infinite buttons
-  // because hasTrigger only looked inside host).
+  // Stable entity keys (post/comment reddit ids) — random uids caused infinite
+  // Comment buttons: each SPA re-render minted a new uid while old buttons lived on.
   let uidSeq = 0;
-  function hostUid(host) {
-    let id = host.getAttribute("data-rch-uid");
-    if (!id) {
-      id = `r${(++uidSeq).toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      host.setAttribute("data-rch-uid", id);
-    }
-    return id;
+  function bareId(raw) {
+    return String(raw || "")
+      .replace(/^(t3_|t1_|thing_t3_|thing_t1_)/i, "")
+      .toLowerCase()
+      .trim();
   }
 
-  function makeTriggerRow(host) {
+  function entityKey(host, kind) {
+    if (!host) return "";
+    const existing = host.getAttribute("data-rch-entity");
+    if (existing) return existing;
+
+    let key = "";
+    if (kind === "post" || host.tagName === "SHREDDIT-POST" || host.matches?.(".thing.link, [data-testid='post-container'], article[id^='t3_']")) {
+      const raw =
+        host.getAttribute("id") ||
+        host.getAttribute("thingid") ||
+        host.getAttribute("post-id") ||
+        host.getAttribute("data-fullname") ||
+        host.getAttribute("data-post-id") ||
+        host.getAttribute("permalink") ||
+        "";
+      const fromPerm = String(raw).match(/\/comments\/([a-z0-9]+)/i);
+      const id = bareId(fromPerm ? fromPerm[1] : raw);
+      if (id && /^[a-z0-9]{5,12}$/i.test(id)) key = `p_${id}`;
+    }
+    if (!key && (kind === "comment" || host.matches?.(COMMENT_OWNER_SEL))) {
+      const raw =
+        host.getAttribute("thingid") ||
+        host.getAttribute("comment-id") ||
+        host.getAttribute("id") ||
+        host.getAttribute("data-fullname") ||
+        host.getAttribute("data-comment-id") ||
+        "";
+      const id = bareId(raw);
+      if (id && /^[a-z0-9]{5,12}$/i.test(id)) key = `c_${id}`;
+    }
+    if (!key) {
+      // Last resort — still better than pure random every call if attr sticks
+      let fallback = host.getAttribute("data-rch-uid");
+      if (!fallback) {
+        fallback = `r${(++uidSeq).toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+        host.setAttribute("data-rch-uid", fallback);
+      }
+      key = fallback;
+    }
+    host.setAttribute("data-rch-entity", key);
+    host.setAttribute("data-rch-uid", key); // alias for older paths
+    return key;
+  }
+
+  function hostUid(host, kind) {
+    return entityKey(host, kind);
+  }
+
+  function makeTriggerRow(host, kind) {
     const row = document.createElement("div");
     row.className = "rch-trigger-row";
-    if (host) row.setAttribute("data-rch-for", hostUid(host));
+    const key = host ? entityKey(host, kind) : "";
+    if (key) {
+      row.setAttribute("data-rch-for", key);
+      row.setAttribute("data-rch-entity", key);
+    }
     row.setAttribute(
       "style",
       "display:inline-flex;align-items:center;width:fit-content;margin:4px 8px 6px;position:relative;z-index:5;vertical-align:middle;"
@@ -1642,115 +1691,124 @@
   }
 
   /**
-   * Place trigger row BELOW the whole action bar (never inside vote cluster).
-   * Falls back to host append before nested children.
+   * ALWAYS place the trigger row INSIDE the host node.
+   * Never insertAdjacent on external action bars — those re-render and leave
+   * orphan buttons stacked on the feed card (the multi-Comment bug).
    */
   function fallbackTriggerRow(host, kind) {
-    const row = makeTriggerRow(host);
-    const safe = findSafeActionAnchor(host);
-
-    // Prefer a sibling row under the action bar container — not between icons
-    if (safe?.parent) {
-      try {
-        const bar = safe.parent;
-        // Insert after the entire bar node if bar is a flex row of actions
-        if (bar.parentElement && bar !== host) {
-          bar.insertAdjacentElement("afterend", row);
-          return row;
-        }
-        // Otherwise append at end of bar (after Share), still better than after upvote
-        if (!isVoteControl(safe.el)) {
-          safe.el.insertAdjacentElement("afterend", row);
-          return row;
-        }
-      } catch (_) { /* fall through */ }
-    }
+    const row = makeTriggerRow(host, kind);
 
     if (kind === "comment") {
-      // Nested replies: put row after this comment's own body, before child threads
       const ownContent = ownContentElement(host, "comment");
-      if (ownContent) {
-        // After body content, still on this host (visible for nested OP replies)
+      if (ownContent && host.contains(ownContent)) {
         try {
-          ownContent.insertAdjacentElement("afterend", row);
-          if (row.isConnected) return row;
+          // Prefer after body but still under this comment host
+          const parent = ownContent.parentElement;
+          if (parent && host.contains(parent)) {
+            parent.insertBefore(row, ownContent.nextSibling);
+            if (row.isConnected && host.contains(row)) return row;
+          }
         } catch (_) {}
-        ownContent.appendChild(row);
-        return row;
+        try {
+          ownContent.appendChild(row);
+          if (host.contains(row)) return row;
+        } catch (_) {}
       }
     }
 
+    // Posts + fallback comments: append inside host, before nested comment trees
     const boundary = [...(host.children || [])].find((child) =>
       child.matches?.(
         'shreddit-comment,div[data-testid="comment"],.Comment,.comment,.child,[slot="children"],shreddit-composer,[data-testid="comment-submission-form"]'
       )
     );
-    if (boundary) host.insertBefore(row, boundary);
-    else host.appendChild(row);
+    try {
+      if (boundary) host.insertBefore(row, boundary);
+      else host.appendChild(row);
+    } catch (_) {
+      try { host.appendChild(row); } catch (__) {}
+    }
     return row;
   }
 
-  function triggersFor(host) {
+  function triggersFor(host, kind) {
     if (!host) return [];
-    const id = host.getAttribute("data-rch-uid");
+    const key = entityKey(host, kind);
     const local = [
       ...(host.querySelectorAll?.(".rch-trigger, .rch-trigger-row") || []),
       ...(host.shadowRoot?.querySelectorAll?.(".rch-trigger, .rch-trigger-row") || []),
     ];
-    // Also catch buttons inserted next to Share (may live outside host subtree)
-    const remote = id
-      ? [...document.querySelectorAll(`.rch-trigger[data-rch-for="${id}"], .rch-trigger-row[data-rch-for="${id}"]`)]
+    const remote = key
+      ? [
+          ...document.querySelectorAll(
+            `.rch-trigger[data-rch-entity="${key}"], .rch-trigger-row[data-rch-entity="${key}"],` +
+              `.rch-trigger[data-rch-for="${key}"], .rch-trigger-row[data-rch-for="${key}"]`
+          ),
+        ]
       : [];
     return [...new Set([...local, ...remote])].filter((el) => el?.isConnected);
   }
 
-  function hasTrigger(host) {
-    return triggersFor(host).some(
+  function hasTrigger(host, kind) {
+    return triggersFor(host, kind).some(
       (el) => el.classList?.contains("rch-trigger") || !!el.querySelector?.(".rch-trigger")
     );
   }
 
-  /** Keep exactly one live button per host; remove the spam pile. */
-  function dedupeTriggers(host) {
-    const all = triggersFor(host);
+  /** Keep exactly one live button per entity; drop the rest (including outside host). */
+  function dedupeTriggers(host, kind) {
+    const all = triggersFor(host, kind);
     const buttons = all.filter((el) => el.classList?.contains("rch-trigger"));
-    const rows = all.filter((el) => el.classList?.contains("rch-trigger-row"));
-    const keep = buttons[0] || null;
+    // Prefer a button still inside the host
+    const keep =
+      buttons.find((b) => host.contains(b) || host.shadowRoot?.contains?.(b)) ||
+      buttons[0] ||
+      null;
     for (const b of buttons) {
       if (b !== keep) {
         try { b.remove(); } catch (_) {}
       }
     }
-    for (const r of rows) {
+    for (const r of all.filter((el) => el.classList?.contains("rch-trigger-row"))) {
       if (!r.querySelector?.(".rch-trigger")) {
         try { r.remove(); } catch (_) {}
       }
     }
-    // Orphan spam without uid (from older buggy injects)
     return !!keep?.isConnected;
   }
 
-  /** Sweep global orphan Comment/Reply piles (no data-rch-for / disconnected host). */
+  /**
+   * Global sweep: one button per entity key; nuke untagged spam;
+   * on feed pages, strip ALL reply triggers (comments shouldn't inject there).
+   */
   function purgeOrphanTriggers() {
     try {
-      const buttons = [...document.querySelectorAll(".rch-trigger")];
-      const byFor = new Map();
-      for (const b of buttons) {
-        const id = b.getAttribute("data-rch-for") || "";
-        if (!id) {
-          // Legacy untagged — remove extras, keep none if host unknown
+      const onPostPage = /\/comments\//i.test(location.pathname);
+      const byKey = new Map();
+
+      document.querySelectorAll(".rch-trigger").forEach((b) => {
+        const kind = b.getAttribute("data-rch-kind") || "";
+        // Feed must never show Reply buttons (nested comment inject leaking)
+        if (!onPostPage && kind === "reply") {
           try { b.remove(); } catch (_) {}
-          continue;
+          return;
         }
-        if (!byFor.has(id)) byFor.set(id, []);
-        byFor.get(id).push(b);
-      }
-      for (const [, list] of byFor) {
+        const key = b.getAttribute("data-rch-entity") || b.getAttribute("data-rch-for") || "";
+        if (!key) {
+          try { b.remove(); } catch (_) {}
+          return;
+        }
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push(b);
+      });
+
+      for (const [, list] of byKey) {
+        // Keep the first connected; remove the rest
         list.slice(1).forEach((b) => {
           try { b.remove(); } catch (_) {}
         });
       }
-      // Empty rows
+
       document.querySelectorAll(".rch-trigger-row").forEach((r) => {
         if (!r.querySelector(".rch-trigger")) {
           try { r.remove(); } catch (_) {}
@@ -1761,28 +1819,31 @@
 
   /** @returns {boolean} whether the button is in the live DOM */
   function place(host, btn, wordRe, kind) {
-    const id = hostUid(host);
-    btn.setAttribute("data-rch-for", id);
-    // Hard guard: never place a second button for this host (uid-tracked)
-    if (hasTrigger(host)) {
+    const key = entityKey(host, kind);
+    btn.setAttribute("data-rch-for", key);
+    btn.setAttribute("data-rch-entity", key);
+    btn.setAttribute("data-rch-kind", kind === "comment" ? "reply" : "comment");
+
+    // Wipe any prior copies for this entity, then place exactly one inside host
+    dedupeTriggers(host, kind);
+    if (hasTrigger(host, kind)) {
       try { btn.remove(); } catch (_) {}
       return true;
     }
 
-    // Old reddit flat-list only
+    // Old reddit flat-list only (must stay inside host)
     const a = actionAnchor(host, wordRe);
     try {
-      if (a && a.old && a.after && !isVoteControl(a.after)) {
+      if (a && a.old && a.after && !isVoteControl(a.after) && host.contains(a.after)) {
         const li = document.createElement("li");
-        li.setAttribute("data-rch-for", id);
+        li.setAttribute("data-rch-for", key);
+        li.setAttribute("data-rch-entity", key);
         li.appendChild(btn);
         a.after.insertAdjacentElement("afterend", li);
-        if (btn.isConnected) return true;
+        if (btn.isConnected && host.contains(btn)) return true;
       }
     } catch (_) { /* fall through */ }
 
-    // New Reddit: ALWAYS use a dedicated row below the action bar.
-    // Never insertAdjacent into the vote/share flex row (squeezes between up/down).
     btn.classList.add("rch-fallback");
     btn.style.position = "static";
     btn.style.display = "inline-flex";
@@ -1794,14 +1855,19 @@
       btn.style.cursor = "wait";
     }
     const row = fallbackTriggerRow(host, kind);
-    if (row) {
-      row.setAttribute("data-rch-for", id);
+    if (row && host.contains(row)) {
+      row.setAttribute("data-rch-for", key);
+      row.setAttribute("data-rch-entity", key);
       row.appendChild(btn);
-      return !!btn.isConnected;
+      // Final safety: if somehow outside, pull back into host
+      if (!host.contains(btn)) {
+        try { host.appendChild(btn); } catch (_) {}
+      }
+      return !!btn.isConnected && host.contains(btn);
     }
     try {
       host.appendChild(btn);
-      return !!btn.isConnected;
+      return !!btn.isConnected && host.contains(btn);
     } catch (_) {
       btn.remove();
       return false;
@@ -1859,39 +1925,47 @@
 
   function collectPostHosts(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
+    // ONLY real post hosts — faceplate-tracker was matching many nodes per card
+    // and spawning a Comment button for each (feed multi-button bug).
     const list = [
-      ...(root.querySelectorAll?.(
-        "shreddit-post, .thing.link, [data-testid='post-container'], article[id^='t3_'], faceplate-tracker[source*='post']"
-      ) || []),
+      ...(root.querySelectorAll?.("shreddit-post, .thing.link") || []),
     ];
-    const seen = new Set();
+    // Fallback containers only when no shreddit-post exists for that card
+    const containers = [
+      ...(root.querySelectorAll?.("[data-testid='post-container'], article[id^='t3_']") || []),
+    ];
+    const seenEl = new Set();
+    const seenKey = new Set();
     const out = [];
-    for (const el of list) {
-      if (seen.has(el)) continue;
-      // Prefer shreddit-post host; skip outer wrappers that only wrap one
-      if (el.tagName !== "SHREDDIT-POST" && el.querySelector?.(":scope > shreddit-post, :scope shreddit-post")) {
-        // still allow if this node IS the interactive card without a shreddit-post child we can use
-        if (el.querySelector?.("shreddit-post")) continue;
-      }
-      if (el.closest?.("shreddit-post") && el.tagName !== "SHREDDIT-POST") continue;
-      // Skip tiny chrome / ads
+
+    const push = (el) => {
+      if (!el || seenEl.has(el)) return;
+      if (el.closest?.("shreddit-post") && el.tagName !== "SHREDDIT-POST") return;
+      if (el.tagName !== "SHREDDIT-POST" && el.querySelector?.("shreddit-post")) return;
       const r = el.getBoundingClientRect?.();
-      if (r && r.height > 0 && r.height < 48) continue;
-      seen.add(el);
+      if (r && r.height > 0 && r.height < 48) return;
+      const key = entityKey(el, "post");
+      if (key && seenKey.has(key)) return;
+      if (key) seenKey.add(key);
+      seenEl.add(el);
       out.push(el);
-    }
+    };
+
+    list.forEach(push);
+    // Only add container fallbacks when we found zero shreddit-posts overall
+    // or this container isn't covered by a post key already
+    containers.forEach(push);
     return out;
   }
 
   function injectPosts(scope) {
     collectPostHosts(scope).forEach((postEl) => {
-      hostUid(postEl);
-      dedupeTriggers(postEl);
-      if (hasTrigger(postEl)) {
+      entityKey(postEl, "post");
+      dedupeTriggers(postEl, "post");
+      if (hasTrigger(postEl, "post")) {
         postEl.setAttribute("data-rchp", "1");
         return;
       }
-      // Stale mark without live button (virtualized feed recycled the node)
       postEl.removeAttribute("data-rchp");
       const btn = mkBtn("Comment", "Soạn comment cho post này");
       btn.onclick = (e) => {
@@ -1900,7 +1974,7 @@
         openPanel(postContext(postEl), postEl);
       };
       if (place(postEl, btn, /share/i, "post")) {
-        dedupeTriggers(postEl);
+        dedupeTriggers(postEl, "post");
         postEl.setAttribute("data-rchp", "1");
       }
     });
@@ -1912,13 +1986,16 @@
       cEl.setAttribute("data-rchc", "skip");
       return false;
     }
-    hostUid(cEl);
-    dedupeTriggers(cEl);
-    if (hasTrigger(cEl)) {
+    // On feed cards, shreddit-comment previews must NOT get Reply buttons
+    // (they paint as spam over the post and were misread as multi-Comment).
+    if (!/\/comments\//i.test(location.pathname)) return false;
+
+    entityKey(cEl, "comment");
+    dedupeTriggers(cEl, "comment");
+    if (hasTrigger(cEl, "comment")) {
       cEl.setAttribute("data-rchc", "1");
       return true;
     }
-    // Stale mark without live button (nested expand / SPA recycle)
     cEl.removeAttribute("data-rchc");
     const btn = mkBtn("Reply", "Reply comment này — đọc comment + reply bên dưới");
     btn.onclick = (e) => {
@@ -1926,9 +2003,8 @@
       e.stopPropagation();
       openPanel(commentContext(cEl), cEl);
     };
-    // place() always uses a row below the action bar — works for nested depth>0 too
     if (place(cEl, btn, /\breply\b/i, "comment")) {
-      dedupeTriggers(cEl);
+      dedupeTriggers(cEl, "comment");
       cEl.setAttribute("data-rchc", "1");
       return true;
     }
@@ -1936,11 +2012,12 @@
   }
 
   function injectComments(scope) {
-    // Two passes: top-level first, then nested (DOM may expand mid-pass)
+    // Reply inject only on full post pages — never home/popular/sub feed
+    if (!/\/comments\//i.test(location.pathname)) return;
     const hosts = collectCommentHosts(scope);
     hosts.forEach((cEl) => injectOneComment(cEl));
-    // Nested threads often mount a tick later after expand
     requestAnimationFrame(() => {
+      if (!/\/comments\//i.test(location.pathname)) return;
       collectCommentHosts(scope).forEach((cEl) => injectOneComment(cEl));
     });
   }
@@ -2050,12 +2127,22 @@
     if (injectBusy) return;
     injectBusy = true;
     try {
-      // SPA can wipe body chrome — always re-assert mascot
       try { ensureMascot(); } catch (_) {}
+      // Always purge first so spam piles never survive a re-inject pass
       purgeOrphanTriggers();
       injectPosts(scope);
-      injectComments(scope);
-      ensurePermalinkTrigger();
+      // Comments/replies only on /comments/ threads
+      if (/\/comments\//i.test(location.pathname)) {
+        injectComments(scope);
+        ensurePermalinkTrigger();
+      } else {
+        // Belt-and-suspenders: strip any reply triggers left on feed
+        document.querySelectorAll('.rch-trigger[data-rch-kind="reply"]').forEach((b) => {
+          try { b.remove(); } catch (_) {}
+        });
+      }
+      // Second purge after inject (dedupe across overlapping hosts)
+      purgeOrphanTriggers();
     } catch (_) {
       /* ignore */
     } finally {
