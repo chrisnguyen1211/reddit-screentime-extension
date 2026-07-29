@@ -615,6 +615,99 @@ $("btnHealth")?.addEventListener("click", async () => {
   }
 });
 
+// ── Shadowban check (anonymous fetch, no cookies) ─────────────────
+function paintShadowbanBox(res) {
+  const box = $("shadowbanBox");
+  if (!box) return;
+  box.classList.remove("sb-clean", "sb-high", "sb-med");
+  if (!res?.ok) {
+    box.classList.add("sb-med");
+    box.textContent = `Shadowban: FAIL — ${res?.error || "unknown error"}`;
+    return;
+  }
+  const v = res.verdict || {};
+  const c = res.checks || {};
+  if (v.severity === "clean") box.classList.add("sb-clean");
+  else if (v.severity === "high") box.classList.add("sb-high");
+  else box.classList.add("sb-med");
+
+  box.textContent =
+    `${v.title || "—"}\n` +
+    `u/${res.username} · ${res.ms || "?"}ms\n` +
+    `${v.summary || ""}\n` +
+    `—\n` +
+    `HTML ${c.html?.status ?? "?"} · ${c.html?.detail || ""}\n` +
+    `about.json ${c.about?.status ?? "?"} · ${c.about?.detail || ""}\n` +
+    `comments.json ${c.comments?.status ?? "?"} · ${c.comments?.detail || ""}\n` +
+    `—\n` +
+    (res.howToManual || "");
+}
+
+function normalizeUserInput(raw) {
+  let u = String(raw || "").trim();
+  if (!u) return "";
+  try {
+    if (/reddit\.com/i.test(u) || /^https?:\/\//i.test(u)) {
+      const m = u.match(/\/user\/([^/?#]+)/i) || u.match(/\/u\/([^/?#]+)/i);
+      if (m) u = decodeURIComponent(m[1]);
+    }
+  } catch (_) {}
+  return u.replace(/^u\//i, "").replace(/^\/+|\/+$/g, "");
+}
+
+$("btnShadowbanCheck")?.addEventListener("click", () => {
+  const box = $("shadowbanBox");
+  let user = normalizeUserInput($("rgl_shadowbanUser")?.value || "");
+  if (!user) {
+    // try last saved / default test account hint
+    user = "Tiny-Compass-8516";
+    if ($("rgl_shadowbanUser")) $("rgl_shadowbanUser").value = user;
+  }
+  if (box) {
+    box.classList.remove("sb-clean", "sb-high", "sb-med");
+    box.textContent = `Shadowban: checking u/${user} (anonymous, no cookies)…`;
+  }
+  chrome.storage.local.set({ rgl_shadowbanUser: user });
+  chrome.runtime.sendMessage({ type: "SHADOWBAN_CHECK", username: user }, (res) => {
+    if (chrome.runtime.lastError) {
+      paintShadowbanBox({ ok: false, error: chrome.runtime.lastError.message });
+      return;
+    }
+    paintShadowbanBox(res);
+  });
+});
+
+$("btnShadowbanOpenIncog")?.addEventListener("click", async () => {
+  const user = normalizeUserInput($("rgl_shadowbanUser")?.value || "Tiny-Compass-8516");
+  const url = `https://www.reddit.com/user/${encodeURIComponent(user)}/`;
+  try {
+    await navigator.clipboard.writeText(url);
+    const box = $("shadowbanBox");
+    if (box) {
+      const prev = box.textContent;
+      box.textContent = `Copied: ${url}\nMở Chrome tab ẩn danh → dán URL để xác nhận thủ công.\n\n${prev}`;
+    }
+  } catch (e) {
+    if ($("shadowbanBox")) $("shadowbanBox").textContent = `URL: ${url}\n(copy failed: ${e.message})`;
+  }
+});
+
+// Prefill shadowban username from storage or active Reddit tab profile
+chrome.storage.local.get(["rgl_shadowbanUser", "rgl_shadowbanLast"], (s) => {
+  if ($("rgl_shadowbanUser")) {
+    $("rgl_shadowbanUser").value =
+      s.rgl_shadowbanUser || s.rgl_shadowbanLast?.username || "Tiny-Compass-8516";
+  }
+  if (s.rgl_shadowbanLast && $("shadowbanBox")) {
+    const L = s.rgl_shadowbanLast;
+    $("shadowbanBox").textContent =
+      `Last: ${L.title || L.status} · u/${L.username || "?"} · ${L.at || ""}`;
+    if (L.severity === "clean") $("shadowbanBox").classList.add("sb-clean");
+    else if (L.severity === "high") $("shadowbanBox").classList.add("sb-high");
+    else $("shadowbanBox").classList.add("sb-med");
+  }
+});
+
 [
   "rgl_scrollSpeed",
   "rgl_upvoteChance",

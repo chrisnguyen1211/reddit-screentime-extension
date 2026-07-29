@@ -268,6 +268,26 @@
         </p>
         <button type="button" id="btnBanGuardRefresh" class="secondary">Refresh ban-guard</button>
         <button type="button" id="btnBanGuardClear" class="secondary">Clear action log</button>
+
+        <hr class="sep" />
+        <strong class="block-label">Shadowban check</strong>
+        <p class="field-note">
+          Fetch profile <b>không cookie</b> (giống tab ẩn danh). Shadowban:
+          bạn vẫn login + lướt feed, nhưng anonymous thấy banned / 404.
+        </p>
+        <label class="block">
+          <span>Username hoặc profile URL</span>
+          <input
+            type="text"
+            id="rgl_shadowbanUser"
+            placeholder="Tiny-Compass-8516 hoặc https://www.reddit.com/user/…"
+          />
+        </label>
+        <div class="row-btns">
+          <button type="button" id="btnShadowbanCheck" class="primary">Check shadowban</button>
+          <button type="button" id="btnShadowbanOpenIncog" class="secondary">Copy profile URL</button>
+        </div>
+        <div class="live-cfg" id="shadowbanBox">Shadowban: chưa check</div>
       </div>
     </section>
 

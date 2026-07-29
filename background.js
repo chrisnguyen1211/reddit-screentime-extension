@@ -2,6 +2,7 @@
 // Routes badge + stats; LLM logic lives in background-llm.js (importScripts).
 
 importScripts("background-llm.js");
+importScripts("background-shadowban.js");
 
 function updateBadge(enabled, mode) {
   if (!enabled) {

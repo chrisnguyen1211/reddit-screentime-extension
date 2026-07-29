@@ -262,6 +262,43 @@ button.secondary:hover {
   line-height: 1.4;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-word;
+  white-space: pre-wrap;
+  margin-top: 8px;
+}
+
+.live-cfg.sb-clean {
+  background: #e8f8ee;
+  color: #14532d;
+  border: 1px solid #86efac;
+}
+.live-cfg.sb-high {
+  background: #fef2f2;
+  color: #7f1d1d;
+  border: 1px solid #fca5a5;
+}
+.live-cfg.sb-med {
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fdba74;
+}
+
+hr.sep {
+  border: 0;
+  border-top: 1px solid #e5e5e5;
+  margin: 14px 0 10px;
+}
+.block-label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.row-btns {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.row-btns button {
+  flex: 1;
 }
 
 .stats > div {
