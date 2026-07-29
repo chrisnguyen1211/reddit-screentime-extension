@@ -46,15 +46,39 @@ describe("placement contract in source", () => {
     );
   });
 
-  it("injectComments only on /comments/ pages; nested still supported", () => {
+  it("never treats more-replies as Reply; only inject visible comments", () => {
+    const src = readSrc("content/20-assist-ui.js");
+    assert.match(src, /function isMoreRepliesControl/);
+    assert.match(src, /more\s\*replies|more\\s\*replies/);
+    assert.match(src, /function isCommentEligibleForReplyInject/);
+    assert.match(src, /already expanded|more replies/i);
+  });
+
+  it("injectComments only on /comments/ pages", () => {
     const src = readSrc("content/20-assist-ui.js");
     assert.match(src, /\/comments\//);
-    assert.match(src, /never home\/popular\/sub feed|ONLY on full post pages|only on full post pages/i);
-    assert.match(src, /nested|SHREDDIT-COMMENT including nested|every depth/i);
+    assert.match(src, /never home\/popular\/sub feed|full post pages/i);
   });
 
   it("purge strips reply triggers on feed", () => {
     const src = readSrc("content/20-assist-ui.js");
     assert.match(src, /data-rch-kind.*reply|kind === \"reply\"/);
+  });
+});
+
+describe("isMoreRepliesControl contract (mirrored)", () => {
+  function isMoreRepliesControl(bits) {
+    return /more\s*replies|view\s*more\s*replies|load\s*more|show\s*more|continue this thread|xem thêm|thêm trả lời|thêm phản hồi|more comments/i.test(
+      bits
+    );
+  }
+  it("flags more-replies expanders", () => {
+    assert.equal(isMoreRepliesControl("3 more replies"), true);
+    assert.equal(isMoreRepliesControl("Continue this thread"), true);
+    assert.equal(isMoreRepliesControl("12 more comments"), true);
+  });
+  it("does not flag real Reply", () => {
+    assert.equal(isMoreRepliesControl("Reply"), false);
+    assert.equal(isMoreRepliesControl("Share"), false);
   });
 });

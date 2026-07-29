@@ -769,9 +769,20 @@
     return null;
   }
   function replyControl(target, targetKind = currentCtx?.target?.kind) {
-    const a = actionAnchor(target, targetKind === "post" ? /comment|reply|bình luận/i : /reply|trả lời/i);
+    // Use word-boundary patterns so "3 more replies" is never matched as Reply
+    // (clicking it auto-expands the whole subthread — bad UX).
+    const re =
+      targetKind === "post"
+        ? /\b(add\s+)?(a\s+)?comment\b|\breply\b|bình luận/i
+        : /\breply\b|trả lời/i;
+    const a = actionAnchor(target, re);
     if (!a?.after || a.after.classList?.contains("rch-trigger")) return null;
-    return a.after.matches?.("button,a,faceplate-tracker") ? a.after : a.after.querySelector?.("button,a,faceplate-tracker");
+    if (isMoreRepliesControl(a.after)) return null;
+    const ctrl = a.after.matches?.("button,a,faceplate-tracker")
+      ? a.after
+      : a.after.querySelector?.("button,a,faceplate-tracker");
+    if (ctrl && isMoreRepliesControl(ctrl)) return null;
+    return ctrl || null;
   }
   async function findComposerForTarget(target, { beforeOpen, preferGlobal = false, allowControl = true, targetKind } = {}) {
     if (target && target.isConnected === false) return null;
@@ -1492,8 +1503,26 @@
     return owner === host;
   }
 
+  /** "3 more replies" / "Continue this thread" — NEVER treat as Reply (clicking expands threads). */
+  function isMoreRepliesControl(el) {
+    if (!el) return false;
+    const bits = [
+      el.getAttribute?.("aria-label") || "",
+      el.getAttribute?.("data-testid") || "",
+      el.getAttribute?.("data-post-click-location") || "",
+      el.getAttribute?.("name") || "",
+      clean(el.textContent || "").slice(0, 120),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return /more\s*replies|view\s*more\s*replies|load\s*more|show\s*more|continue this thread|xem thêm|thêm trả lời|thêm phản hồi|more comments/i.test(
+      bits
+    );
+  }
+
   function matchAction(el, wordRe) {
     if (!el) return false;
+    if (isMoreRepliesControl(el)) return false;
     const bits = [
       el.getAttribute?.("aria-label") || "",
       el.getAttribute?.("data-post-click-location") || "",
@@ -1504,13 +1533,55 @@
     return wordRe.test(bits);
   }
 
+  /**
+   * Only inject ✦ Reply on comments the user can already see (expanded).
+   * Do not force nested trees open — wait until they click "more replies".
+   */
+  function isCommentEligibleForReplyInject(el) {
+    if (!el?.isConnected) return false;
+    if (el.hasAttribute?.("collapsed") || el.getAttribute?.("collapsed") === "true") return false;
+    if (el.getAttribute?.("is-collapsed") === "true") return false;
+    if (el.getAttribute?.("aria-hidden") === "true" || el.hidden) return false;
+
+    // Ancestor comment collapsed → this node is folded away
+    let p = el.parentElement;
+    while (p) {
+      if (p.matches?.(COMMENT_OWNER_SEL)) {
+        if (p.hasAttribute?.("collapsed") || p.getAttribute?.("collapsed") === "true") return false;
+        if (p.getAttribute?.("is-collapsed") === "true") return false;
+        if (p.getAttribute?.("aria-hidden") === "true") return false;
+      }
+      p = p.parentElement;
+    }
+
+    // Zero / tiny layout = not painted (still behind "more replies" stub)
+    const r = el.getBoundingClientRect?.();
+    if (!r || r.width < 12 || r.height < 18) return false;
+    try {
+      const st = window.getComputedStyle(el);
+      if (st.display === "none" || st.visibility === "hidden" || Number(st.opacity) === 0) return false;
+    } catch (_) {}
+
+    // Must have some comment body text area visible
+    const body =
+      el.querySelector?.('[slot="comment"], .usertext-body, .md, [data-testid="comment"]') ||
+      el.shadowRoot?.querySelector?.('[slot="comment"], .md');
+    if (body) {
+      const br = body.getBoundingClientRect?.();
+      if (br && br.height < 4 && br.width < 4) return false;
+    }
+    return true;
+  }
+
   // Walk light + open shadow roots (depth-limited) to find Reply/Share controls.
   // Nested child comments are excluded via ownership so parent inject stays clean.
+  // Never returns "more replies" expanders (would auto-unroll threads).
   function scanActionControls(root, wordRe, host, depth = 0) {
     if (!root || depth > 5) return null;
     const cands = root.querySelectorAll?.("button, a, faceplate-tracker, [role='button']") || [];
     for (const c of cands) {
       if (host && root === host && !isOwnedBy(host, c) && c.getRootNode?.() === document) continue;
+      if (isMoreRepliesControl(c)) continue;
       if (matchAction(c, wordRe)) return c;
     }
     // Nested shadow roots (faceplate-button etc.)
@@ -1905,18 +1976,15 @@
 
   function collectCommentHosts(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
-    // Include nested shreddit-comment at every depth (sub-replies need ✦ Reply too)
+    // Nested comments only when already expanded/visible (user clicked more replies).
+    // Never force-open collapsed trees just to inject buttons.
     const list = [...(root.querySelectorAll?.(COMMENT_HOST_SEL) || [])];
     const seen = new Set();
     const out = [];
     for (const el of list) {
       if (seen.has(el)) continue;
-      // Skip non-shreddit clones inside a shreddit-comment (avoid double inject)
-      // BUT keep every SHREDDIT-COMMENT including nested children
       if (el.tagName !== "SHREDDIT-COMMENT" && el.closest?.("shreddit-comment")) continue;
-      // Skip collapsed/zero-size chrome, not nested depth
-      const r = el.getBoundingClientRect?.();
-      if (r && r.width === 0 && r.height === 0) continue;
+      if (!isCommentEligibleForReplyInject(el)) continue;
       seen.add(el);
       out.push(el);
     }
@@ -1987,8 +2055,12 @@
       return false;
     }
     // On feed cards, shreddit-comment previews must NOT get Reply buttons
-    // (they paint as spam over the post and were misread as multi-Comment).
     if (!/\/comments\//i.test(location.pathname)) return false;
+    // Respect Reddit collapse / "more replies" — only inject when already expanded
+    if (!isCommentEligibleForReplyInject(cEl)) {
+      // If we had a button and user collapsed, leave it; if not eligible yet, skip
+      return false;
+    }
 
     entityKey(cEl, "comment");
     dedupeTriggers(cEl, "comment");
@@ -2003,6 +2075,7 @@
       e.stopPropagation();
       openPanel(commentContext(cEl), cEl);
     };
+    // Strict \breply\b so "more replies" never anchors placement
     if (place(cEl, btn, /\breply\b/i, "comment")) {
       dedupeTriggers(cEl, "comment");
       cEl.setAttribute("data-rchc", "1");
@@ -2014,12 +2087,9 @@
   function injectComments(scope) {
     // Reply inject only on full post pages — never home/popular/sub feed
     if (!/\/comments\//i.test(location.pathname)) return;
-    const hosts = collectCommentHosts(scope);
-    hosts.forEach((cEl) => injectOneComment(cEl));
-    requestAnimationFrame(() => {
-      if (!/\/comments\//i.test(location.pathname)) return;
-      collectCommentHosts(scope).forEach((cEl) => injectOneComment(cEl));
-    });
+    // Single pass on currently-visible comments only. When user clicks
+    // "more replies", MutationObserver re-runs injectAll and picks up new nodes.
+    collectCommentHosts(scope).forEach((cEl) => injectOneComment(cEl));
   }
 
   // Notification / "go to comment" deep-links:
