@@ -343,7 +343,7 @@
   // seed start line
   pushLog("info", ["session start", sessionId, meta.href]);
 
-  // Periodic UI dedupe (SPA re-injects can leave orphan mascots)
+  // Periodic UI dedupe + mascot recovery (SPA / extension reload)
   if (typeof document !== "undefined" && !window.__RGL_DEDUPE_TIMER__) {
     window.__RGL_DEDUPE_TIMER__ = setInterval(() => {
       try {
@@ -353,8 +353,12 @@
         for (let i = 1; i < bubbles.length; i++) bubbles[i].remove();
         const ovs = document.querySelectorAll("#rgl-overlay-root");
         for (let i = 1; i < ovs.length; i++) ovs[i].remove();
+        // If Bram vanished entirely, ask assist to recreate
+        if (!document.querySelector(".rch-mascot")) {
+          window.__RGL_ensureMascot?.();
+        }
       } catch (_) {}
-    }, 4000);
+    }, 2500);
   }
 
   RGL.getSettings = () =>

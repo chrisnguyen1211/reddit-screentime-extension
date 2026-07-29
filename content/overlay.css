@@ -408,11 +408,18 @@
   display: none;
 }
 
-html.rgl-stealth .rch-mascot,
-html.rgl-stealth .rch-bubble,
+/* Stealth dims overlay + triggers, but NEVER hides Bram mascot (user needs it). */
 html.rgl-stealth #rgl-overlay-root {
   opacity: 0.12 !important;
   pointer-events: none !important;
+}
+html.rgl-stealth .rch-bubble {
+  opacity: 0.92 !important; /* keep draft usable */
+}
+html.rgl-stealth .rch-mascot {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
 }
 html.rgl-stealth .rch-trigger {
   opacity: 0.35 !important;

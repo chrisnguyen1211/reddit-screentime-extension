@@ -4,9 +4,16 @@
 // the text straight into Reddit's reply box. No auto-post — human posts.
 
 (function () {
-  // Prevent double inject (SPA / multi content-script runs → 2 mascots)
+  // Soft re-entry: after extension reload, a second inject must still recover the mascot.
+  // Hard-return only when fully booted AND mascot is alive on the page.
   if (window.__RGL_ASSIST_BOOTED__) {
-    console.log("[RGL] assist already booted — skip second inject");
+    console.log("[RGL] assist already booted — recover mascot/inject only");
+    try {
+      window.__RGL_ensureMascot?.();
+      window.__RGL_injectAll?.();
+    } catch (e) {
+      console.warn("[RGL] recover failed", e);
+    }
     return;
   }
   window.__RGL_ASSIST_BOOTED__ = true;
@@ -209,97 +216,193 @@
     else showBubble();
   }
 
-  function ensureMascot() {
-    if (mascotEl && mascotEl.isConnected) return mascotEl;
-    // Reuse existing DOM node if a prior inject left one
-    const existing = document.querySelector(".rch-mascot");
-    if (existing) {
-      // drop extras
-      [...document.querySelectorAll(".rch-mascot")].slice(1).forEach((n) => n.remove());
-      mascotEl = existing;
-      return mascotEl;
+  /** Hard inline styles — survive Reddit CSS wars + stealth partial hides. */
+  function paintMascotChrome(el, pos) {
+    if (!el) return;
+    const left = pos?.left != null ? Math.round(pos.left) : 14;
+    const top = pos?.top != null ? Math.round(pos.top) : null;
+    // Always force visibility (stealth used to set opacity 0.12 + pointer-events none)
+    el.style.setProperty("position", "fixed", "important");
+    el.style.setProperty("z-index", "2147483646", "important");
+    el.style.setProperty("width", "92px", "important");
+    el.style.setProperty("height", "116px", "important");
+    el.style.setProperty("opacity", "1", "important");
+    el.style.setProperty("visibility", "visible", "important");
+    el.style.setProperty("display", "block", "important");
+    el.style.setProperty("pointer-events", "auto", "important");
+    el.style.setProperty("cursor", "grab", "important");
+    el.style.setProperty("right", "auto", "important");
+    if (top != null && Number.isFinite(top)) {
+      el.style.setProperty("left", `${left}px`, "important");
+      el.style.setProperty("top", `${top}px`, "important");
+      el.style.setProperty("bottom", "auto", "important");
+    } else {
+      el.style.setProperty("left", "14px", "important");
+      el.style.setProperty("bottom", "16px", "important");
+      el.style.setProperty("top", "auto", "important");
     }
-    mascotEl = document.createElement("div");
-    mascotEl.className = "rch-mascot";
-    mascotEl.title = "Bram — kéo để di chuyển · bấm để mở/đóng bubble comment";
-    mascotEl.setAttribute("role", "button");
-    mascotEl.tabIndex = 0;
-    mascotEl.innerHTML = bramSvg("idle", 92);
-    mascotEl.querySelector(".m-face").innerHTML = bramFace("happy");
-    document.body.appendChild(mascotEl);
-    try {
-      chrome.storage?.local.get(["rchPos"], (r) => {
-        // Prefer bottom-left default so mascot doesn't sit on Claude overlay (bottom-right).
-        if (r && r.rchPos && Number(r.rchPos.left) < window.innerWidth * 0.45) {
-          mascotEl.style.left = r.rchPos.left + "px";
-          mascotEl.style.top = r.rchPos.top + "px";
-          mascotEl.style.right = "auto";
-          mascotEl.style.bottom = "auto";
-        } else if (r && r.rchPos) {
-          try { chrome.storage.local.remove("rchPos"); } catch (_) {}
-        }
-        if (isBubbleVisible()) positionBubble();
-      });
-    } catch (_) {}
+  }
 
-    // Drag to move (bubble follows). Click (no drag) toggles bubble.
-    mascotEl.addEventListener("pointerdown", (e) => {
+  function isMascotOnScreen(el) {
+    if (!el?.isConnected) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return false;
+    const vw = window.innerWidth || 800;
+    const vh = window.innerHeight || 600;
+    // At least 20px of the mascot must sit inside the viewport
+    const visibleW = Math.min(r.right, vw) - Math.max(r.left, 0);
+    const visibleH = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+    return visibleW >= 20 && visibleH >= 20;
+  }
+
+  function clampMascotOnScreen(el) {
+    if (!el) return;
+    if (isMascotOnScreen(el)) return;
+    // Reset to default bottom-left
+    paintMascotChrome(el, null);
+    try { chrome.storage?.local.remove("rchPos"); } catch (_) {}
+  }
+
+  function mountMascotNode(el) {
+    const parent = document.documentElement; // <html> survives SPA body swaps better than body
+    if (el.parentElement !== parent) {
+      try {
+        parent.appendChild(el);
+      } catch (_) {
+        try { document.body?.appendChild(el); } catch (__) {}
+      }
+    }
+  }
+
+  function bindMascotEvents(el) {
+    if (el.dataset.rchBound === "1") return;
+    el.dataset.rchBound = "1";
+
+    el.addEventListener("pointerdown", (e) => {
       if (e.button != null && e.button !== 0) return;
       dragPointerId = e.pointerId;
-      dragStart = { x: e.clientX, y: e.clientY, rect: mascotEl.getBoundingClientRect() };
+      dragStart = { x: e.clientX, y: e.clientY, rect: el.getBoundingClientRect() };
       dragging = false;
-      try { mascotEl.setPointerCapture(e.pointerId); } catch (_) {}
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}
     });
-    mascotEl.addEventListener("pointermove", (e) => {
+    el.addEventListener("pointermove", (e) => {
       if (!dragStart || e.pointerId !== dragPointerId) return;
       const dx = e.clientX - dragStart.x;
       const dy = e.clientY - dragStart.y;
       if (!dragging && Math.hypot(dx, dy) < 6) return;
       dragging = true;
-      mascotEl.classList.add("dragging");
+      el.classList.add("dragging");
       const left = Math.max(4, Math.min(window.innerWidth - dragStart.rect.width - 4, dragStart.rect.left + dx));
       const top = Math.max(4, Math.min(window.innerHeight - dragStart.rect.height - 4, dragStart.rect.top + dy));
-      mascotEl.style.left = left + "px";
-      mascotEl.style.top = top + "px";
-      mascotEl.style.right = "auto";
-      mascotEl.style.bottom = "auto";
+      paintMascotChrome(el, { left, top });
       if (isBubbleVisible()) positionBubble();
     });
     const endDrag = (e) => {
       if (dragPointerId != null && e.pointerId !== dragPointerId) return;
-      try { mascotEl.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { el.releasePointerCapture(e.pointerId); } catch (_) {}
       const wasDrag = dragging;
       if (dragStart && !wasDrag) {
-        // pure click → open/minimize generated-comment bubble
         e.preventDefault?.();
         toggleBubble();
       }
       if (wasDrag) {
-        const r = mascotEl.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
         try {
           chrome.storage?.local.set({ rchPos: { left: Math.round(r.left), top: Math.round(r.top) } });
         } catch (_) {}
         if (isBubbleVisible()) positionBubble();
       }
-      mascotEl.classList.remove("dragging");
+      el.classList.remove("dragging");
       dragStart = null;
       dragging = false;
       dragPointerId = null;
     };
-    mascotEl.addEventListener("pointerup", endDrag);
-    mascotEl.addEventListener("pointercancel", endDrag);
-    mascotEl.addEventListener("keydown", (e) => {
+    el.addEventListener("pointerup", endDrag);
+    el.addEventListener("pointercancel", endDrag);
+    el.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         toggleBubble();
       }
     });
+  }
 
-    window.addEventListener("resize", () => {
-      if (isBubbleVisible()) positionBubble();
+  function ensureMascot() {
+    // Drop extras
+    const all = [...document.querySelectorAll(".rch-mascot")];
+    all.slice(1).forEach((n) => {
+      try { n.remove(); } catch (_) {}
     });
+
+    let el = (mascotEl && mascotEl.isConnected && mascotEl) || all[0] || null;
+    const created = !el;
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "rch-mascot";
+      el.id = "rgl-bram-mascot";
+      el.title = "Bram — kéo để di chuyển · bấm để mở/đóng bubble comment";
+      el.setAttribute("role", "button");
+      el.tabIndex = 0;
+      try {
+        el.innerHTML = bramSvg("idle", 92);
+        const face = el.querySelector(".m-face");
+        if (face) face.innerHTML = bramFace("happy");
+      } catch (e) {
+        // SVG fail — still show a visible fallback chip
+        el.textContent = "🟠 Bram";
+        el.style.font = "700 14px/116px system-ui,sans-serif";
+        el.style.textAlign = "center";
+        el.style.background = "#1b1b1f";
+        el.style.color = "#ff8a55";
+        el.style.borderRadius = "16px";
+        console.warn("[RGL] bram svg failed, using chip", e);
+      }
+    }
+
+    mascotEl = el;
+    mountMascotNode(el);
+    paintMascotChrome(el, null);
+    bindMascotEvents(el);
+
+    // Restore saved position only if on-screen; otherwise keep default bottom-left
+    if (created || !isMascotOnScreen(el)) {
+      try {
+        chrome.storage?.local.get(["rchPos"], (r) => {
+          if (!mascotEl) return;
+          const pos = r?.rchPos;
+          if (
+            pos &&
+            Number.isFinite(Number(pos.left)) &&
+            Number.isFinite(Number(pos.top)) &&
+            Number(pos.left) >= 0 &&
+            Number(pos.top) >= 0 &&
+            Number(pos.left) < window.innerWidth * 0.85 &&
+            Number(pos.top) < window.innerHeight * 0.9
+          ) {
+            paintMascotChrome(mascotEl, { left: Number(pos.left), top: Number(pos.top) });
+            if (!isMascotOnScreen(mascotEl)) {
+              paintMascotChrome(mascotEl, null);
+              try { chrome.storage.local.remove("rchPos"); } catch (_) {}
+            }
+          } else if (pos) {
+            try { chrome.storage.local.remove("rchPos"); } catch (_) {}
+          }
+          clampMascotOnScreen(mascotEl);
+          if (isBubbleVisible()) positionBubble();
+        });
+      } catch (_) {
+        clampMascotOnScreen(el);
+      }
+    } else {
+      clampMascotOnScreen(el);
+    }
+
+    // Always force visible — stealth must not hide Bram (needed to open bubble)
+    clampMascotOnScreen(el);
     return mascotEl;
   }
+  // Expose for soft re-entry after extension reload
+  window.__RGL_ensureMascot = ensureMascot;
 
   /** Anchor bubble above mascot (always attached). */
   function positionBubble() {
@@ -2351,17 +2454,29 @@
   }, 800);
 
   ensureMascot();
+  window.__RGL_injectAll = injectAll;
   scheduleInjectBurst("boot");
-  // Keep mascot alive across Reddit SPA body swaps
+  // Keep mascot alive across Reddit SPA body swaps / extension reloads
   setInterval(() => {
     if (!contextAlive()) return;
     try {
-      if (!document.querySelector(".rch-mascot") || (mascotEl && !mascotEl.isConnected)) {
+      const el = document.querySelector(".rch-mascot");
+      if (!el || !el.isConnected || !isMascotOnScreen(el)) {
         mascotEl = null;
         ensureMascot();
+      } else {
+        // re-assert visibility in case stealth/Reddit CSS fights us
+        paintMascotChrome(el, {
+          left: el.getBoundingClientRect().left,
+          top: el.getBoundingClientRect().top,
+        });
+        mountMascotNode(el);
+        mascotEl = el;
       }
-    } catch (_) {}
-  }, 2000);
+    } catch (_) {
+      try { ensureMascot(); } catch (__) {}
+    }
+  }, 1500);
 
   let queued = false;
   const obs = new MutationObserver(() => {

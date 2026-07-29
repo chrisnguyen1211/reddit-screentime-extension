@@ -60,7 +60,7 @@ describe("CSS integrity", () => {
     const css = readSrc("content.css");
     assert.match(css, /\.rch-mascot\s*\{/);
     assert.match(css, /position:\s*fixed/);
-    assert.match(css, /z-index:\s*2147483001/);
+    assert.match(css, /z-index:\s*2147483646|z-index:\s*2147483001/);
     // no orphaned property block (property without selector) after rch-has-bubble
     assert.ok(
       !/\.rch-mascot\.rch-has-bubble[^{]*\{[^}]*\}\s*width:\s*92px/.test(css),

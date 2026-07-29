@@ -374,15 +374,18 @@
     const stealth = !!s.rgl_stealthUi;
     try {
       document.documentElement.classList.toggle("rgl-stealth", stealth);
+      // Never dim/hide .rch-mascot — Bram must stay visible for comment bubble
       if (stealth) {
-        document.querySelectorAll(".rch-mascot, .rch-bubble, #rgl-overlay-root").forEach((el) => {
+        document.querySelectorAll("#rgl-overlay-root").forEach((el) => {
           el.style.setProperty("opacity", "0.15");
         });
       } else {
-        document.querySelectorAll(".rch-mascot, .rch-bubble, #rgl-overlay-root").forEach((el) => {
+        document.querySelectorAll("#rgl-overlay-root, .rch-bubble").forEach((el) => {
           el.style.removeProperty("opacity");
         });
       }
+      // Re-assert mascot after stealth toggle
+      try { window.__RGL_ensureMascot?.(); } catch (_) {}
     } catch (_) {}
   }
 

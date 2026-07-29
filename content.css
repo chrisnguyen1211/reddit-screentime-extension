@@ -13,25 +13,27 @@
   .rch-trigger, .rch-trigger__edge { transition: none !important; }
 }
 
-/* ── Bram mascot: bottom-LEFT so it does not cover RGL overlay (bottom-right) ── */
-.rch-mascot {
+/* ── Bram mascot: bottom-LEFT (also forced via inline styles in JS) ── */
+.rch-mascot,
+#rgl-bram-mascot {
   position: fixed !important;
-  left: 14px;
-  right: auto;
-  bottom: 16px;
-  top: auto;
-  z-index: 2147483001 !important;
-  width: 92px;
-  height: 116px;
-  cursor: grab;
+  left: 14px !important;
+  right: auto !important;
+  bottom: 16px !important;
+  top: auto !important;
+  z-index: 2147483646 !important;
+  width: 92px !important;
+  height: 116px !important;
+  cursor: grab !important;
   pointer-events: auto !important;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: none;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  touch-action: none !important;
   filter: drop-shadow(0 7px 16px rgba(0, 0, 0, 0.45));
   transition: filter 0.2s ease, transform 0.15s ease;
   opacity: 1 !important;
   visibility: visible !important;
+  display: block !important;
 }
 .rch-mascot.rch-has-bubble {
   filter: drop-shadow(0 6px 14px rgba(255, 79, 31, 0.45));
