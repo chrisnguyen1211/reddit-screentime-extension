@@ -1595,56 +1595,91 @@
     return row;
   }
 
-  /** Visible vote/share action cluster — prefer this over text-body/media slots. */
-  function findActionCluster(host) {
-    const anchor = actionAnchor(host, /share|comment|upvote|vote/i);
-    if (anchor?.after?.parentElement) return { el: anchor.after, parent: anchor.after.parentElement, shadow: !!anchor.shadow };
-    // Light-DOM row of icon buttons under the post
-    const buttons = [...(host.querySelectorAll?.("button, a, faceplate-tracker") || [])].filter((el) => {
-      if (!isOwnedBy(host, el) && el.getRootNode?.() === document) return false;
-      return matchAction(el, /share|comment|upvote|award/i);
-    });
-    if (buttons[0]?.parentElement) return { el: buttons[0], parent: buttons[0].parentElement, shadow: false };
-    if (host.shadowRoot) {
-      const shBtn = [...host.shadowRoot.querySelectorAll("button, a, faceplate-tracker")].find((el) =>
-        matchAction(el, /share|comment|upvote|award/i)
-      );
-      if (shBtn?.parentElement) return { el: shBtn, parent: shBtn.parentElement, shadow: true };
+  function isVoteControl(el) {
+    if (!el) return false;
+    const bits = [
+      el.getAttribute?.("aria-label") || "",
+      el.getAttribute?.("data-post-click-location") || "",
+      el.getAttribute?.("data-testid") || "",
+      el.getAttribute?.("name") || "",
+      clean(el.textContent || "").slice(0, 40),
+    ].join(" ").toLowerCase();
+    // Never park our button next to these — was squeezing between up/downvote
+    return /\b(up\s?vote|down\s?vote|upvote|downvote)\b/.test(bits) ||
+      /vote-(up|down)|upvote|downvote|arrowUp|arrowDown/i.test(bits);
+  }
+
+  /**
+   * Find Share (preferred) or the last non-vote control in the action bar.
+   * Never return an upvote/downvote node — that caused ✦ Comment between votes.
+   */
+  function findSafeActionAnchor(host) {
+    // 1) Share first
+    const share = actionAnchor(host, /\bshare\b/i);
+    if (share?.after && !isVoteControl(share.after) && share.after.parentElement) {
+      return { el: share.after, parent: share.after.parentElement, shadow: !!share.shadow, kind: "share" };
+    }
+    // 2) Reply / Award / comment-count (still not vote)
+    for (const re of [/\breply\b/i, /\baward\b/i, /\bcomment/i]) {
+      const a = actionAnchor(host, re);
+      if (a?.after && !isVoteControl(a.after) && a.after.parentElement) {
+        return { el: a.after, parent: a.after.parentElement, shadow: !!a.shadow, kind: "action" };
+      }
+    }
+    // 3) Walk light buttons, pick last non-vote in a row that has share/reply
+    const collect = (root) =>
+      [...(root?.querySelectorAll?.("button, a, faceplate-tracker, [role='button']") || [])].filter((el) => {
+        if (host && root === host && !isOwnedBy(host, el) && el.getRootNode?.() === document) return false;
+        return true;
+      });
+    const light = collect(host);
+    const nonVote = light.filter((el) => !isVoteControl(el) && matchAction(el, /share|reply|award|comment/i));
+    if (nonVote.length && nonVote[nonVote.length - 1].parentElement) {
+      const el = nonVote[nonVote.length - 1];
+      return { el, parent: el.parentElement, shadow: false, kind: "row-end" };
     }
     return null;
   }
 
+  /**
+   * Place trigger row BELOW the whole action bar (never inside vote cluster).
+   * Falls back to host append before nested children.
+   */
   function fallbackTriggerRow(host, kind) {
     const row = makeTriggerRow(host);
+    const safe = findSafeActionAnchor(host);
 
-    // Posts: NEVER bury the button inside text-body / media (feed cards clip those
-    // slots → "some posts have the button, some don't"). Sit on the action bar.
-    if (kind === "post") {
-      const cluster = findActionCluster(host);
-      if (cluster?.parent) {
-        try {
-          if (cluster.el.nextSibling) cluster.parent.insertBefore(row, cluster.el.nextSibling);
-          else cluster.parent.appendChild(row);
+    // Prefer a sibling row under the action bar container — not between icons
+    if (safe?.parent) {
+      try {
+        const bar = safe.parent;
+        // Insert after the entire bar node if bar is a flex row of actions
+        if (bar.parentElement && bar !== host) {
+          bar.insertAdjacentElement("afterend", row);
           return row;
-        } catch (_) { /* fall through */ }
-      }
-      // Host light DOM, before nested comments / below content
-      const boundary = [...(host.children || [])].find((child) =>
-        child.matches?.(
-          'shreddit-comment,div[data-testid="comment"],.Comment,.comment,.child,[slot="children"],shreddit-composer,[data-testid="comment-submission-form"]'
-        )
-      );
-      if (boundary) host.insertBefore(row, boundary);
-      else host.appendChild(row);
-      return row;
+        }
+        // Otherwise append at end of bar (after Share), still better than after upvote
+        if (!isVoteControl(safe.el)) {
+          safe.el.insertAdjacentElement("afterend", row);
+          return row;
+        }
+      } catch (_) { /* fall through */ }
     }
 
-    // Comments: prefer own body slot so collapsed threads hide the trigger too
-    const ownContent = ownContentElement(host, kind);
-    if (ownContent) {
-      ownContent.appendChild(row);
-      return row;
+    if (kind === "comment") {
+      // Nested replies: put row after this comment's own body, before child threads
+      const ownContent = ownContentElement(host, "comment");
+      if (ownContent) {
+        // After body content, still on this host (visible for nested OP replies)
+        try {
+          ownContent.insertAdjacentElement("afterend", row);
+          if (row.isConnected) return row;
+        } catch (_) {}
+        ownContent.appendChild(row);
+        return row;
+      }
     }
+
     const boundary = [...(host.children || [])].find((child) =>
       child.matches?.(
         'shreddit-comment,div[data-testid="comment"],.Comment,.comment,.child,[slot="children"],shreddit-composer,[data-testid="comment-submission-form"]'
@@ -1733,25 +1768,21 @@
       try { btn.remove(); } catch (_) {}
       return true;
     }
+
+    // Old reddit flat-list only
     const a = actionAnchor(host, wordRe);
     try {
-      if (a && a.old) {
+      if (a && a.old && a.after && !isVoteControl(a.after)) {
         const li = document.createElement("li");
         li.setAttribute("data-rch-for", id);
         li.appendChild(btn);
-        if (a.after) a.after.insertAdjacentElement("afterend", li);
-        else a.container.appendChild(li);
+        a.after.insertAdjacentElement("afterend", li);
         if (btn.isConnected) return true;
       }
-      // Light-DOM action bar (Share/Reply): safe with data-rch-for dedupe.
-      // Shadow action bars re-render and wipe nodes — skip for both kinds and
-      // use the dedicated row path instead.
-      if (a && a.after && !a.shadow) {
-        a.after.insertAdjacentElement("afterend", btn);
-        if (btn.isConnected) return true;
-      }
-    } catch (_) { /* fall through to row */ }
+    } catch (_) { /* fall through */ }
 
+    // New Reddit: ALWAYS use a dedicated row below the action bar.
+    // Never insertAdjacent into the vote/share flex row (squeezes between up/down).
     btn.classList.add("rch-fallback");
     btn.style.position = "static";
     btn.style.display = "inline-flex";
@@ -1768,7 +1799,6 @@
       row.appendChild(btn);
       return !!btn.isConnected;
     }
-    // Absolute last resort — still on host, never into random slots
     try {
       host.appendChild(btn);
       return !!btn.isConnected;
@@ -1809,14 +1839,18 @@
 
   function collectCommentHosts(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
+    // Include nested shreddit-comment at every depth (sub-replies need ✦ Reply too)
     const list = [...(root.querySelectorAll?.(COMMENT_HOST_SEL) || [])];
-    // De-dupe: prefer outer shreddit-comment over nested testid clones
     const seen = new Set();
     const out = [];
     for (const el of list) {
       if (seen.has(el)) continue;
-      // Skip non-shreddit nodes that live inside a shreddit-comment we already handle
+      // Skip non-shreddit clones inside a shreddit-comment (avoid double inject)
+      // BUT keep every SHREDDIT-COMMENT including nested children
       if (el.tagName !== "SHREDDIT-COMMENT" && el.closest?.("shreddit-comment")) continue;
+      // Skip collapsed/zero-size chrome, not nested depth
+      const r = el.getBoundingClientRect?.();
+      if (r && r.width === 0 && r.height === 0) continue;
       seen.add(el);
       out.push(el);
     }
@@ -1879,18 +1913,21 @@
       return false;
     }
     hostUid(cEl);
-    if (dedupeTriggers(cEl) || hasTrigger(cEl)) {
+    dedupeTriggers(cEl);
+    if (hasTrigger(cEl)) {
       cEl.setAttribute("data-rchc", "1");
       return true;
     }
+    // Stale mark without live button (nested expand / SPA recycle)
+    cEl.removeAttribute("data-rchc");
     const btn = mkBtn("Reply", "Reply comment này — đọc comment + reply bên dưới");
     btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       openPanel(commentContext(cEl), cEl);
     };
-    // Prefer Reply; Share/Award as secondary anchors on stripped action bars
-    if (place(cEl, btn, /reply|share|award/i, "comment")) {
+    // place() always uses a row below the action bar — works for nested depth>0 too
+    if (place(cEl, btn, /\breply\b/i, "comment")) {
       dedupeTriggers(cEl);
       cEl.setAttribute("data-rchc", "1");
       return true;
@@ -1899,7 +1936,13 @@
   }
 
   function injectComments(scope) {
-    collectCommentHosts(scope).forEach((cEl) => injectOneComment(cEl));
+    // Two passes: top-level first, then nested (DOM may expand mid-pass)
+    const hosts = collectCommentHosts(scope);
+    hosts.forEach((cEl) => injectOneComment(cEl));
+    // Nested threads often mount a tick later after expand
+    requestAnimationFrame(() => {
+      collectCommentHosts(scope).forEach((cEl) => injectOneComment(cEl));
+    });
   }
 
   // Notification / "go to comment" deep-links:
@@ -2007,6 +2050,8 @@
     if (injectBusy) return;
     injectBusy = true;
     try {
+      // SPA can wipe body chrome — always re-assert mascot
+      try { ensureMascot(); } catch (_) {}
       purgeOrphanTriggers();
       injectPosts(scope);
       injectComments(scope);
@@ -2091,6 +2136,16 @@
 
   ensureMascot();
   scheduleInjectBurst("boot");
+  // Keep mascot alive across Reddit SPA body swaps
+  setInterval(() => {
+    if (!contextAlive()) return;
+    try {
+      if (!document.querySelector(".rch-mascot") || (mascotEl && !mascotEl.isConnected)) {
+        mascotEl = null;
+        ensureMascot();
+      }
+    } catch (_) {}
+  }, 2000);
 
   let queued = false;
   const obs = new MutationObserver(() => {
