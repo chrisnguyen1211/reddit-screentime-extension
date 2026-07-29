@@ -1961,6 +1961,58 @@
     return commentAuthor(commentEl).replace(/^u\//i, "").trim().toLowerCase() === "automoderator";
   }
 
+  /**
+   * Removed / deleted comments — never inject Reply or auto-reply.
+   * Matches Reddit copy: "Comment removed by moderator", "[removed]", deleted by user, etc.
+   */
+  function isRemovedComment(commentEl) {
+    if (!commentEl) return false;
+    // Explicit attrs Reddit sometimes sets
+    const attrBlob = [
+      commentEl.getAttribute?.("is-removed"),
+      commentEl.getAttribute?.("removed"),
+      commentEl.getAttribute?.("deleted"),
+      commentEl.getAttribute?.("data-removed"),
+      commentEl.getAttribute?.("data-deleted"),
+      commentEl.getAttribute?.("moderator-removed"),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (/^(true|1|yes|removed|deleted)$/i.test(attrBlob) || /removed|deleted/.test(attrBlob)) {
+      // data-removed="" alone is weak; still check text below
+      if (commentEl.hasAttribute?.("is-removed") || commentEl.getAttribute?.("is-removed") === "true") return true;
+      if (commentEl.hasAttribute?.("deleted") && commentEl.getAttribute("deleted") !== "false") return true;
+    }
+
+    const author = commentAuthor(commentEl).replace(/^u\//i, "").trim().toLowerCase();
+    if (author === "[deleted]" || author === "deleted" || author === "[removed]") return true;
+
+    // Body / status text Reddit injects for removals
+    const bodyBits = [
+      commentEl.querySelector?.('[slot="comment"]')?.textContent,
+      commentEl.querySelector?.(".usertext-body, .md, [data-testid='comment']")?.textContent,
+      commentEl.shadowRoot?.querySelector?.('[slot="comment"], .md, faceplate-tracker')?.textContent,
+      // Status lines sometimes sit outside the main slot
+      commentEl.querySelector?.("[id*='removed'], [class*='removed'], [class*='deleted']")?.textContent,
+    ]
+      .map((t) => clean(t || ""))
+      .filter(Boolean)
+      .join("\n");
+
+    const slice = (bodyBits || clean(commentEl.textContent || "")).slice(0, 280);
+    if (
+      /comment removed by moderator|removed by moderator|comment deleted by user|deleted by user|\[removed\]|\[deleted\]|this comment was removed|comment has been removed|bình luận đã bị gỡ|đã bị mod xóa|đã bị xóa bởi/i.test(
+        slice
+      )
+    ) {
+      return true;
+    }
+    // Bare placeholder body
+    if (/^\[(removed|deleted)\]$/i.test(slice.trim())) return true;
+    return false;
+  }
+
   function isPromotedComment(commentEl) {
     if (commentEl.getAttribute?.("is-ad") === "true") return true;
     if (commentEl.hasAttribute?.("promoted")) return true;
@@ -2050,7 +2102,14 @@
 
   function injectOneComment(cEl) {
     if (!cEl || !cEl.isConnected) return false;
-    if (isAutoModeratorComment(cEl) || isPromotedComment(cEl)) {
+    if (isAutoModeratorComment(cEl) || isPromotedComment(cEl) || isRemovedComment(cEl)) {
+      // Drop any Reply button already attached to removed comments
+      try {
+        dedupeTriggers(cEl, "comment");
+        triggersFor(cEl, "comment").forEach((n) => {
+          try { n.remove(); } catch (_) {}
+        });
+      } catch (_) {}
       cEl.setAttribute("data-rchc", "skip");
       return false;
     }
@@ -2353,6 +2412,8 @@
     startScan,
     stopScan,
     isAutoModeratorComment,
+    isRemovedComment,
+    isPromotedComment,
     showBubble,
     hideBubble,
     toggleBubble,

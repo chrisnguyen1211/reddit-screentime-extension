@@ -82,3 +82,26 @@ describe("isMoreRepliesControl contract (mirrored)", () => {
     assert.equal(isMoreRepliesControl("Share"), false);
   });
 });
+
+describe("removed-comment detection contract", () => {
+  function isRemovedText(slice) {
+    return /comment removed by moderator|removed by moderator|comment deleted by user|deleted by user|\[removed\]|\[deleted\]|this comment was removed|comment has been removed/i.test(
+      slice
+    );
+  }
+  it("flags moderator removals", () => {
+    assert.equal(isRemovedText("Comment removed by moderator"), true);
+    assert.equal(isRemovedText("[removed]"), true);
+    assert.equal(isRemovedText("Comment deleted by user"), true);
+  });
+  it("does not flag normal comments", () => {
+    assert.equal(isRemovedText("I removed the old feature and shipped v2"), false);
+    assert.equal(isRemovedText("moderator tools are useful"), false);
+  });
+  it("source exports isRemovedComment and skips inject", () => {
+    const src = readSrc("content/20-assist-ui.js");
+    assert.match(src, /function isRemovedComment/);
+    assert.match(src, /isRemovedComment\(cEl\)/);
+    assert.match(src, /Comment removed by moderator/i);
+  });
+});

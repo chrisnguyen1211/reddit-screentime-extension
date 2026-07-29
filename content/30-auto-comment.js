@@ -166,6 +166,15 @@
     // OP explicitly invites SaaS/product drops → strong boost + auto-seed
     if (promo.invite) s += 0.55 + (promo.confidence || 0) * 0.25;
     if (RGL.assist?.isAutoModeratorComment?.(el)) s = -1;
+    if (RGL.assist?.isRemovedComment?.(el)) s = -1;
+    if (RGL.assist?.isPromotedComment?.(el)) s = -1;
+    if (
+      kind === "comment" &&
+      (/^\[(removed|deleted)\]$/i.test(text.trim()) ||
+        /comment removed by moderator|removed by moderator|deleted by user/i.test(text))
+    ) {
+      s = -1;
+    }
     if (words < L.minWords && !questions.length && !promo.invite) s -= 0.4;
 
     // Promo-invite threads: lower eng gate (they're often new "drop your link" posts)
@@ -249,15 +258,27 @@
             // Prefer shreddit host when both wrap the same node
             if (c.tagName !== "SHREDDIT-COMMENT" && c.closest?.("shreddit-comment")) return false;
             if (RGL.assist?.isAutoModeratorComment?.(c)) return false;
+            if (RGL.assist?.isRemovedComment?.(c)) return false;
+            if (RGL.assist?.isPromotedComment?.(c)) return false;
             const r = c.getBoundingClientRect();
             return r.height > 40 && r.bottom > 0 && r.top < window.innerHeight;
           });
         const ranked = comments
           .map((c) => {
             const cctx = RGL.assist.commentContext(c);
+            // Skip empty / removal placeholders even if scoring would pass
+            const body = (cctx?.replyingTo || "").trim();
+            if (
+              !body ||
+              /^\[(removed|deleted)\]$/i.test(body) ||
+              /comment removed by moderator|removed by moderator|deleted by user/i.test(body)
+            ) {
+              return null;
+            }
             const sc = scoreTarget(c, "comment", cctx);
             return { c, cctx, sc };
           })
+          .filter(Boolean)
           .filter((x) => x.sc.pass && (x.sc.questions.length > 0 || x.sc.promo?.invite))
           .sort((a, b) => b.sc.score - a.sc.score);
         if (ranked[0]) {

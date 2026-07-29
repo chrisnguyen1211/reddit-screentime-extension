@@ -1,6 +1,6 @@
 {
   "name": "reddit-screentime-extension",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "private": true,
   "description": "Reddit Growth Lab — tests for LLM scrub, prompts, placement, dist helpers",
   "scripts": {

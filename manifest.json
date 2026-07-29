@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Reddit Growth Lab",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "description": "Reddit Growth Lab: screentime, upvote, auto-comment with distribution (queue, quotas, quiet hours, ban-guard).",
   "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [
