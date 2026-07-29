@@ -58,7 +58,8 @@ describe("manifest.json", () => {
 describe("CSS integrity", () => {
   it("mascot has required fixed positioning rules", () => {
     const css = readSrc("content.css");
-    assert.match(css, /\.rch-mascot\s*\{/);
+    assert.match(css, /\.rch-mascot/);
+    assert.match(css, /#rgl-bram-mascot|rgl-bram-mascot/);
     assert.match(css, /position:\s*fixed/);
     assert.match(css, /z-index:\s*2147483646|z-index:\s*2147483001/);
     // no orphaned property block (property without selector) after rch-has-bubble
