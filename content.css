@@ -50,22 +50,25 @@
   right: auto;
   bottom: auto;
   z-index: 2147483002;
-  width: min(340px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
   max-height: min(70vh, 480px);
   overflow: auto;
   box-sizing: border-box;
+  background: #1b1b1f;
+  color: #e8e6e3;
+  border: 1px solid #3a2a20;
+  border-radius: 16px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+  padding: 14px 14px 12px;
+  font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+  animation: rchPop 0.2s cubic-bezier(0.34, 1.4, 0.5, 1);
 }
 /* Tail points toward mascot (below bubble) */
 .rch-bubble.rch-bubble--left::before { right: auto; left: 28px; }
 .rch-bubble.rch-bubble--left::after { right: auto; left: 29px; }
 .rch-bubble.rch-bubble--right::before { right: 30px; left: auto; }
 .rch-bubble.rch-bubble--right::after { right: 31px; left: auto; }
-  width: 360px; max-width: calc(100vw - 28px);
-  background: #1b1b1f; color: #e8e6e3; border: 1px solid #3a2a20; border-radius: 16px;
-  box-shadow: 0 16px 44px rgba(0,0,0,.55); padding: 14px 14px 12px;
-  font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
-  animation: rchPop .2s cubic-bezier(.34,1.4,.5,1);
-}
 @keyframes rchPop { from { transform: translateY(10px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 /* tail pointing down-right toward the mascot */
 .rch-bubble::before { content: ""; position: absolute; right: 30px; bottom: -13px; border: 12px solid transparent; border-top-color: #3a2a20; }
