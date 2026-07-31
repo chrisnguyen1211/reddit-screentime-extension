@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadLlmPure, readSrc } from "./helpers/load.mjs";
 
-const { buildPrompt, subHint, SUB_HINTS, ANTI_AI_STYLE, LENGTHS, VIBES } = loadLlmPure();
+const { buildPrompt, buildDmPrompt, subHint, SUB_HINTS, ANTI_AI_STYLE, LENGTHS, VIBES } = loadLlmPure();
 
 describe("subHint()", () => {
   it("maps known subs", () => {
@@ -128,5 +128,66 @@ describe("ANTI_AI_STYLE contract in source", () => {
     assert.match(src, /\^honestly/);
     assert.match(src, /\[\.!\?\]/);
     assert.match(src, /toUpperCase/);
+  });
+});
+
+describe("buildDmPrompt() — DM / chat support path", () => {
+  const dmCtx = {
+    channel: "dm",
+    kind: "dm",
+    peer: "curious_user",
+    messages: [
+      { role: "them", author: "curious_user", text: "hey does your tool work offline?" },
+      { role: "me", text: "mostly yes for drafts" },
+      { role: "them", author: "curious_user", text: "can i try free?" },
+    ],
+    replyingTo: "can i try free?",
+    lang: "English",
+    target: { kind: "dm", label: "💬 DM · u/curious_user", author: "curious_user" },
+  };
+
+  it("exports buildDmPrompt and routes via channel=dm", () => {
+    assert.equal(typeof buildDmPrompt, "function");
+    const direct = buildDmPrompt({ productContext: "Brocaly", style: "value_only" }, dmCtx);
+    const routed = buildPrompt({ productContext: "Brocaly", style: "value_only" }, dmCtx);
+    assert.match(direct, /private Reddit DM|chat reply/i);
+    assert.match(routed, /curious_user/);
+    assert.match(routed, /can i try free/i);
+  });
+
+  it("includes product support context when set", () => {
+    const p = buildDmPrompt({ productContext: "Brocaly writing tool", style: "soft_mention" }, dmCtx);
+    assert.match(p, /Brocaly/);
+    assert.match(p, /support|product/i);
+  });
+
+  it("honors user instruction", () => {
+    const p = buildDmPrompt(
+      { productContext: "", style: "value_only" },
+      { ...dmCtx, instruction: "short and friendly, invite them to trial" }
+    );
+    assert.match(p, /USER INSTRUCTION|invite them to trial/i);
+  });
+
+  it("does not use public comment ON-TOPIC block for DMs", () => {
+    const p = buildDmPrompt({ productContext: "", style: "value_only" }, dmCtx);
+    assert.ok(!/ON-TOPIC HARD RULES/.test(p));
+  });
+});
+
+describe("DM assist source contracts", () => {
+  it("assist-ui defines isDmPage and injectDmAssist", () => {
+    const src = readSrc("content/20-assist-ui.js");
+    assert.match(src, /function isDmPage/);
+    assert.match(src, /function injectDmAssist/);
+    assert.match(src, /function dmContext/);
+    assert.match(src, /channel:\s*"dm"/);
+    assert.match(src, /data-rch-kind="dm"/);
+  });
+
+  it("llm routes dm via channel or kind", () => {
+    const src = readSrc("background-llm.js");
+    assert.match(src, /channel === "dm"/);
+    assert.match(src, /function buildDmPrompt/);
   });
 });

@@ -29,6 +29,7 @@ export function loadLlmPure() {
     return {
       scrub,
       buildPrompt,
+      buildDmPrompt,
       subHint,
       SUB_HINTS,
       ANTI_AI_STYLE,

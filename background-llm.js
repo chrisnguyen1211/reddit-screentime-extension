@@ -109,7 +109,78 @@ const LENGTH_KEYS = ["short", "short", "medium", "medium", "long"]; // weighted 
 const VIBE_KEYS = Object.keys(VIBES);
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
+// Private chat / inbox DM — support-style reply (not a public Reddit comment).
+// Context fields: channel:"dm", peer, messages[{role,text,author?}], replyingTo, lang, instruction
+function buildDmPrompt(cfg, ctx, brief) {
+  const b = brief || { length: pick(["short", "medium", "medium", "long"]), vibe: pick(["tip", "agree", "question", "react"]) };
+  const lengthHint =
+    b.length === "short"
+      ? "1 short chat bubble, under ~25 words"
+      : b.length === "long"
+        ? "a bit fuller, 3-5 short sentences max — still a DM, not an email"
+        : "1-3 short sentences, normal chat length";
+  const who = cfg.productContext?.trim()
+    ? `You draft private Reddit chat replies for the person who builds / supports: ${cfg.productContext.trim()}.\n` +
+      `Role: helpful peer + light product support — answer their question first, never pitchy.\n`
+    : `You draft a private Reddit chat (DM) reply for a real person talking 1:1.\n`;
+  const styleMode = ctx.style || cfg.style;
+  const styleRule =
+    styleMode === "soft_mention"
+      ? `You MAY mention the product once if it genuinely helps THIS conversation, with honest ownership ("I built X" / "our tool"). No hard sell, no CTA spam.`
+      : `Do NOT push or mention a product unless they already asked about it. Pure helpful reply.`;
+  const langRule = ctx.lang
+    ? `LANGUAGE: write the DM in ${ctx.lang} ONLY, matching their messages.\n`
+    : `LANGUAGE: write in the SAME language as their last messages below.\n`;
+  const instrRule =
+    ctx.instruction && ctx.instruction.trim()
+      ? `\nUSER INSTRUCTION for THIS draft (highest priority): ${ctx.instruction.trim()}\n`
+      : "";
+  const peer = (ctx.peer || ctx.replyAuthor || "them").replace(/^u\//i, "");
+  const lines = Array.isArray(ctx.messages)
+    ? ctx.messages
+        .slice(-20)
+        .map((m) => {
+          const role = m.role === "me" || m.role === "self" ? "me" : "them";
+          const whoLine = role === "me" ? "me" : `u/${m.author || peer}`;
+          return `${whoLine}: ${String(m.text || "").trim()}`;
+        })
+        .filter((l) => l.length > 4)
+        .join("\n")
+    : "";
+  const lastThem =
+    ctx.replyingTo ||
+    [...(ctx.messages || [])].reverse().find((m) => m.role !== "me" && m.role !== "self")?.text ||
+    "";
+  const historyBlock = lines
+    ? `RECENT CHAT (oldest → newest):\n${lines}\n`
+    : lastThem
+      ? `THEIR LAST MESSAGE:\n"${String(lastThem).slice(0, 1200)}"\n`
+      : `No transcript extracted — write a friendly short check-in reply.\n`;
+
+  return (
+    `You help write ONE private Reddit DM / chat reply ready to send.\n${who}\n` +
+    langRule +
+    `PEER: u/${peer}\n` +
+    historyBlock +
+    (lastThem ? `\nReply mainly to their latest point: "${String(lastThem).slice(0, 600)}"\n` : "") +
+    instrRule +
+    `\nOUTPUT RULES:\n` +
+    `- Length: ${lengthHint}.\n` +
+    `- Sound like a real person in chat: warm, clear, concrete. Contractions ok. Sentence casing normal.\n` +
+    `- Answer what they asked. If unclear, ask ONE short clarifying question.\n` +
+    `- If support-ish: give next step (what to try / what you need from them). No corporate boilerplate.\n` +
+    `- No markdown headers, no bullets unless 2 short lines max. No em dashes. No "Hope this helps" / "Great question".\n` +
+    `- Do NOT open with "yeah" / "hey!" spam / "absolutely". Jump into the useful bit (short greeting ok once).\n` +
+    `- Output the reply text only — no quotes wrapping the whole message.\n` +
+    `${styleRule}\n`
+  );
+}
+
 function buildPrompt(cfg, ctx, brief) {
+  // DM / inbox chat path
+  if (ctx && (ctx.channel === "dm" || ctx.kind === "dm" || ctx.target?.kind === "dm")) {
+    return buildDmPrompt(cfg, ctx, brief);
+  }
   const b = brief || { length: pick(LENGTH_KEYS), vibe: pick(VIBE_KEYS) };
   const briefRule = `\nTHIS ONE (make it different from other comments): length ${LENGTHS[b.length] || LENGTHS.medium}; move = ${VIBES[b.vibe] || VIBES.react}. Still stay 100% on-topic and real.\n`;
   const styleMode = ctx.style || cfg.style;

@@ -1,6 +1,6 @@
-# Reddit Growth Lab `2.1.0`
+# Reddit Growth Lab `2.2.0`
 
-Gộp **screentime scroll** + **upvote** + **LLM comment/reply** + **comment distribution** (queue, quota, quiet hours, ban-guard) thành một Chrome extension.
+Gộp **screentime scroll** + **upvote** + **LLM comment/reply** + **DM reply assist** + **comment distribution** (queue, quota, quiet hours, ban-guard) thành một Chrome extension.
 
 > Lab cá nhân / account test. **Không** merge vào Bravestep production (Bravestep cố ý no-auto-vote).
 
@@ -75,6 +75,17 @@ Tab **Dist** — xem chi tiết [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
 6. Gap + chance **drift**; max 1 comment / thread / session  
 
 Manual ✨ **Comment/Reply** (Bram) vẫn inject — human-in-the-loop bất kỳ mode.
+
+## DM / chat reply assist (v2.2)
+
+Trên **chat.reddit.com**, `/chat`, hoặc **inbox** (`/message…`): nút floating **DM Reply**.
+
+1. Mở conversation với user  
+2. Bấm **DM Reply** → Bram đọc transcript gần đây + soạn draft (support tone, dùng product context từ popup)  
+3. Sửa draft / rescan / instruction tùy ý  
+4. **Fill** vào ô Message → **bạn** bấm Send (không auto-send)
+
+Seeding 🌱: cho phép mention product 1 lần nếu hợp lý (có disclose).
 
 ## File layout
 

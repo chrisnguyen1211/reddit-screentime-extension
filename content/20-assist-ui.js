@@ -518,7 +518,7 @@
       const kind = currentCtx?.target?.kind || "post";
       const filled = await fillComposerForTarget(draft, currentTargetEl, {
         targetKind: kind,
-        preferGlobal: kind === "post" || !currentTargetEl,
+        preferGlobal: kind === "post" || kind === "dm" || !currentTargetEl,
         allowControl: true,
         beforeOpen: (control) => {
           if (kind !== "post") return;
@@ -528,7 +528,7 @@
       if (filled) {
         clearPendingFill();
         flash(fill, "✓ Đã điền");
-        showFillNotice("✓ Đã điền vào ô comment Reddit");
+        showFillNotice(kind === "dm" ? "✓ Đã điền vào ô chat — bấm Send khi ok" : "✓ Đã điền vào ô comment Reddit");
       } else if (handedOffToPost) {
         flash(fill, "Đang mở comment…");
       } else {
@@ -564,9 +564,10 @@
   }
   function quoteExcerpt(ctx) {
     if (!ctx) return "";
-    const source = ctx.target?.kind === "comment"
-      ? ctx.replyingTo
-      : [ctx.title, ctx.body].filter(Boolean).join(" — ");
+    const source =
+      ctx.target?.kind === "comment" || ctx.target?.kind === "dm" || ctx.channel === "dm"
+        ? ctx.replyingTo || ctx.body
+        : [ctx.title, ctx.body].filter(Boolean).join(" — ");
     return clean(source).slice(0, 280);
   }
   function renderQuote(ctx) {
@@ -1212,6 +1213,59 @@
     }
 
     const kind = options.targetKind || currentCtx?.target?.kind || "post";
+
+    // DM / chat: jump straight to bottom composer (no shreddit comment hosts)
+    if (kind === "dm" || isDmPage()) {
+      let el = target && isEditable(target) && vis(target) ? target : findDmComposer();
+      if (!el) {
+        try {
+          document.querySelector('[placeholder*="Message" i], [aria-label*="Message" i], [aria-label*="Type a message" i]')?.click?.();
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 200));
+        el = findDmComposer();
+      }
+      if (!el) {
+        const a = deepActiveElement();
+        if (isEditable(a) && !isOurUi(a)) el = a;
+      }
+      if (!el) {
+        console.warn("[RGL] fillComposer DM: no chat editor");
+        showFillNotice("Không tìm thấy ô chat — click vào ô Message rồi Fill lại");
+        try {
+          await navigator.clipboard?.writeText(want);
+        } catch (_) {}
+        return false;
+      }
+      try {
+        el.scrollIntoView?.({ block: "center", behavior: "auto" });
+      } catch (_) {}
+      el.click?.();
+      el.focus?.();
+      await new Promise((r) => setTimeout(r, 80));
+      const focused = deepActiveElement();
+      if (isEditable(focused) && !isOurUi(focused)) el = focused;
+      let ok =
+        el.tagName === "TEXTAREA" || el.tagName === "INPUT"
+          ? await fillNativeInput(el, want)
+          : await fillContentEditable(el, want);
+      if (!ok && !readEditorText(el).trim()) {
+        await clearEditor(el);
+        ok =
+          el.tagName === "TEXTAREA" || el.tagName === "INPUT"
+            ? await fillNativeInput(el, want)
+            : await fillContentEditable(el, want);
+      }
+      if (!ok) {
+        showFillNotice("Fill chat thất bại — draft đã copy, dán ⌘V");
+        try {
+          await navigator.clipboard?.writeText(want);
+        } catch (_) {}
+      } else {
+        console.log("[RGL] fillComposer DM OK", readEditorText(el).slice(0, 80));
+      }
+      return ok;
+    }
+
     await nudgeOpenComposer(kind);
 
     let el = await findComposerForTarget(target, { ...options, preferGlobal: options.preferGlobal ?? kind === "post" });
@@ -1484,6 +1538,289 @@
     renderQuote(ctx);
     showBubble();
     runScan();
+  }
+
+  // ── DM / chat assist (inbox + chat.reddit.com) ─────────────────────────────
+  // Human-in-the-loop: generate support-style draft → Fill into composer → you Send.
+  function isDmPage(loc) {
+    try {
+      const host = String((loc || location).hostname || "");
+      const path = String((loc || location).pathname || "");
+      if (/(^|\.)chat\.reddit\.com$/i.test(host)) return true;
+      if (/\/chat(\/|$)/i.test(path)) return true;
+      if (/\/message(s)?(\/|$)/i.test(path)) return true;
+      if (/\/mail(\/|$)/i.test(path)) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  function dmPeerUsername() {
+    const fromHref = (href) => {
+      const m = String(href || "").match(/\/(?:user|u)\/([^/?#]+)/i);
+      if (!m) return "";
+      const u = decodeURIComponent(m[1]).replace(/^u\//i, "");
+      if (!u || /^(me|reddit|AutoModerator|spam|admin)$/i.test(u)) return "";
+      return u;
+    };
+    // Header / room title links first
+    const headerSels = [
+      '[data-testid="room-header"] a[href*="/user/"]',
+      '[data-testid="room-header"] a[href*="/u/"]',
+      "header a[href*='/user/']",
+      "header a[href*='/u/']",
+      '[class*="RoomHeader"] a[href*="/user/"]',
+      '[class*="chat-header"] a[href*="/user/"]',
+      'a[href*="/user/"][class*="username"]',
+    ];
+    for (const sel of headerSels) {
+      try {
+        const a = document.querySelector(sel);
+        const u = fromHref(a?.getAttribute?.("href") || a?.href);
+        if (u) return u;
+      } catch (_) {}
+    }
+    // Title: "username : Reddit" / "u/foo - Chat"
+    try {
+      const t = document.title || "";
+      let m = t.match(/\bu\/([A-Za-z0-9_-]{2,30})\b/i);
+      if (m) return m[1];
+      m = t.match(/^([A-Za-z0-9_-]{2,30})\s*[:|·\-–—]/);
+      if (m && !/reddit|chat|inbox|messages/i.test(m[1])) return m[1];
+    } catch (_) {}
+    // Most frequent /user/ link in main pane (excluding self nav)
+    const counts = new Map();
+    try {
+      document.querySelectorAll('a[href*="/user/"], a[href*="/u/"]').forEach((a) => {
+        const u = fromHref(a.getAttribute("href") || a.href);
+        if (!u) return;
+        counts.set(u, (counts.get(u) || 0) + 1);
+      });
+    } catch (_) {}
+    let best = "", bestN = 0;
+    for (const [u, n] of counts) {
+      if (n > bestN) {
+        best = u;
+        bestN = n;
+      }
+    }
+    return best;
+  }
+
+  function guessMsgRole(text, author, peer, myNames) {
+    const a = String(author || "").replace(/^u\//i, "").toLowerCase();
+    if (a && myNames.has(a)) return "me";
+    if (a && peer && a === peer.toLowerCase()) return "them";
+    // Heuristic: no author → them if we only care about last inbound
+    return a ? "them" : "them";
+  }
+
+  function dmMyUsernames() {
+    const set = new Set();
+    try {
+      // Logged-in user chip / avatar menu
+      document.querySelectorAll('a[href*="/user/"], a[href*="/u/"]').forEach((a) => {
+        const href = a.getAttribute("href") || "";
+        if (/\/user\/me\b|\/u\/me\b/i.test(href)) return;
+        // "profile" in user drawer often has data attributes
+        const label = clean(a.getAttribute("aria-label") || a.textContent || "");
+        if (/profile|your profile|account/i.test(label)) {
+          const m = href.match(/\/(?:user|u)\/([^/?#]+)/i);
+          if (m) set.add(decodeURIComponent(m[1]).toLowerCase());
+        }
+      });
+    } catch (_) {}
+    return set;
+  }
+
+  function collectDmMessages(peer, limit = 18) {
+    const out = [];
+    const seen = new Set();
+    const myNames = dmMyUsernames();
+    const push = (text, author, roleHint) => {
+      const t = clean(text).slice(0, 800);
+      if (!t || t.length < 2) return;
+      // Skip chrome / nav crumbs
+      if (/^(send|message|chat|inbox|settings|search|reddit|home|popular)$/i.test(t)) return;
+      if (t.length > 600 && !/[.!?…]/.test(t)) return; // wall of UI junk
+      const key = t.slice(0, 120).toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      const authorClean = String(author || "").replace(/^u\//i, "");
+      const role = roleHint || guessMsgRole(t, authorClean, peer, myNames);
+      out.push({ role, author: authorClean || (role === "them" ? peer : ""), text: t });
+    };
+
+    const fromHref = (href) => {
+      const m = String(href || "").match(/\/(?:user|u)\/([^/?#]+)/i);
+      return m ? decodeURIComponent(m[1]) : "";
+    };
+
+    // Prefer explicit message containers when present
+    const msgSels = [
+      '[data-testid="message"]',
+      '[data-testid="chat-message"]',
+      '[data-testid="timeline-message"]',
+      '[class*="TimelineMessage"]',
+      '[class*="ChatMessage"]',
+      '[class*="message-content"]',
+      "rs-message",
+      "li[class*='message' i]",
+    ];
+    let nodes = [];
+    for (const sel of msgSels) {
+      try {
+        nodes = [...document.querySelectorAll(sel)];
+        if (nodes.length) break;
+      } catch (_) {}
+    }
+
+    if (nodes.length) {
+      for (const n of nodes) {
+        if (isOurUi(n)) continue;
+        let author = "";
+        try {
+          const a = n.querySelector?.('a[href*="/user/"], a[href*="/u/"]');
+          author = fromHref(a?.getAttribute?.("href") || a?.href);
+        } catch (_) {}
+        // Drop author name from text if duplicated
+        let text = clean(n.textContent || "");
+        if (author) text = text.replace(new RegExp("^" + author.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*", "i"), "");
+        text = text.replace(/\b(Just now|\d+\s*(m|h|d|min|hour|day)s?\s*ago)\b/gi, "").trim();
+        push(text, author);
+      }
+    } else {
+      // Fallback: walk listitems / articles in main
+      const root =
+        document.querySelector('[role="main"], main, #AppRouter-main-content, [class*="Timeline"], [class*="MessageList"]') ||
+        document.body;
+      const items = [
+        ...root.querySelectorAll('[role="listitem"], article, [class*="Message"], [class*="bubble"]'),
+      ].slice(-40);
+      for (const n of items) {
+        if (isOurUi(n) || !vis(n)) continue;
+        const r = n.getBoundingClientRect?.();
+        if (r && r.height > 280) continue; // skip huge containers
+        let author = "";
+        try {
+          const a = n.querySelector?.('a[href*="/user/"], a[href*="/u/"]');
+          author = fromHref(a?.getAttribute?.("href") || a?.href);
+        } catch (_) {}
+        const text = clean(n.textContent || "").slice(0, 800);
+        if (text.split(/\s+/).length < 2 && text.length < 8) continue;
+        push(text, author);
+      }
+    }
+
+    // Keep last N only (conversation tail)
+    return out.slice(-limit);
+  }
+
+  function findDmComposer() {
+    // Bottom-most visible editable — chat composers sit at the bottom
+    const editables = allPageEditables().filter((el) => vis(el) && !isOurUi(el));
+    if (!editables.length) {
+      // Try placeholder shells
+      const shells = [
+        ...document.querySelectorAll(
+          'textarea, [contenteditable="true"], [role="textbox"], [data-testid*="composer"], [placeholder*="Message" i], [aria-label*="Message" i], [aria-label*="Type" i]'
+        ),
+      ];
+      for (const s of shells) {
+        if (isOurUi(s)) continue;
+        if (isEditable(s) && vis(s)) return s;
+        const inner = editableInRoot(s)[0];
+        if (inner && vis(inner)) return inner;
+      }
+      return null;
+    }
+    return editables
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { el, y: r.bottom, area: r.width * r.height };
+      })
+      .sort((a, b) => b.y - a.y || b.area - a.area)[0]?.el || null;
+  }
+
+  function dmContext() {
+    const peer = dmPeerUsername();
+    const messages = collectDmMessages(peer, 18);
+    const lastThem =
+      [...messages].reverse().find((m) => m.role !== "me")?.text ||
+      [...messages].reverse()[0]?.text ||
+      "";
+    const blob = messages.map((m) => m.text).join("\n");
+    const lang = detectLang(blob || lastThem);
+    const questions = extractQuestions(lastThem || blob);
+    const label = peer ? `💬 DM · u/${peer}` : "💬 DM / Chat";
+    return {
+      channel: "dm",
+      kind: "dm",
+      peer,
+      title: peer ? `Chat with u/${peer}` : "Reddit chat",
+      body: lastThem.slice(0, 1500),
+      messages,
+      replyingTo: lastThem.slice(0, 1200),
+      replyAuthor: peer,
+      subreddit: "",
+      topComments: [],
+      images: [],
+      questions,
+      lang,
+      target: { kind: "dm", label, author: peer || "" },
+    };
+  }
+
+  function injectDmAssist(scope = document) {
+    if (!isDmPage()) {
+      // Remove floating DM trigger when leaving chat
+      document.querySelectorAll('.rch-trigger[data-rch-kind="dm"]').forEach((b) => {
+        try {
+          b.remove();
+        } catch (_) {}
+      });
+      return;
+    }
+    // One floating dock near the composer (chat UIs rarely have stable action bars)
+    let dock = document.querySelector(".rch-dm-dock");
+    if (!dock || !dock.isConnected) {
+      dock = document.createElement("div");
+      dock.className = "rch-dm-dock";
+      dock.setAttribute(
+        "style",
+        "position:fixed;z-index:2147483002;right:18px;bottom:88px;display:flex;flex-direction:column;gap:8px;pointer-events:none;"
+      );
+      document.documentElement.appendChild(dock);
+    }
+    let btn = dock.querySelector('.rch-trigger[data-rch-kind="dm"]');
+    if (!btn) {
+      btn = mkBtn("DM Reply", "Soạn reply DM / chat (support assist) — Fill rồi bạn bấm Send");
+      btn.dataset.rchKind = "dm";
+      btn.setAttribute("data-rch-kind", "dm");
+      btn.setAttribute("data-rch-entity", "dm:global");
+      btn.setAttribute("data-rch-for", "dm:global");
+      btn.style.pointerEvents = "auto";
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const ctx = dmContext();
+        const composer = findDmComposer();
+        openPanel(ctx, composer || null);
+      };
+      dock.appendChild(btn);
+    }
+    // Reposition dock above composer if we can find it
+    try {
+      const composer = findDmComposer();
+      if (composer) {
+        const r = composer.getBoundingClientRect();
+        const bottom = Math.max(24, window.innerHeight - r.top + 12);
+        dock.style.bottom = Math.min(220, bottom) + "px";
+        dock.style.right = Math.max(12, window.innerWidth - r.right) + "px";
+      } else {
+        dock.style.bottom = "88px";
+        dock.style.right = "18px";
+      }
+    } catch (_) {}
   }
 
   // ── context extraction (read LAZILY on click) ──────────────────────────────
@@ -1962,6 +2299,13 @@
 
       document.querySelectorAll(".rch-trigger").forEach((b) => {
         const kind = b.getAttribute("data-rch-kind") || "";
+        // Floating DM assist lives outside post hosts — keep a single dock button
+        if (kind === "dm") {
+          const key = "dm:global";
+          if (!byKey.has(key)) byKey.set(key, []);
+          byKey.get(key).push(b);
+          return;
+        }
         // Feed must never show Reply buttons (nested comment inject leaking)
         if (!onPostPage && kind === "reply") {
           try { b.remove(); } catch (_) {}
@@ -2362,6 +2706,12 @@
       try { ensureMascot(); } catch (_) {}
       // Always purge first so spam piles never survive a re-inject pass
       purgeOrphanTriggers();
+      // Chat / inbox: DM assist only (no post/comment inject)
+      if (isDmPage()) {
+        injectDmAssist(scope);
+        purgeOrphanTriggers();
+        return;
+      }
       injectPosts(scope);
       // Comments/replies only on /comments/ threads
       if (/\/comments\//i.test(location.pathname)) {
@@ -2373,6 +2723,12 @@
           try { b.remove(); } catch (_) {}
         });
       }
+      // Leave chat docks if we navigated away
+      document.querySelectorAll(".rch-dm-dock").forEach((d) => {
+        try {
+          d.remove();
+        } catch (_) {}
+      });
       // Second purge after inject (dedupe across overlapping hosts)
       purgeOrphanTriggers();
     } catch (_) {
@@ -2500,8 +2856,11 @@
     scrollQueued = true;
     setTimeout(() => {
       scrollQueued = false;
-      injectPosts(document);
-      injectComments(document);
+      if (isDmPage()) injectDmAssist(document);
+      else {
+        injectPosts(document);
+        injectComments(document);
+      }
     }, 400);
   };
   window.addEventListener("scroll", onScrollInject, { passive: true, capture: true });
@@ -2517,6 +2876,11 @@
     openPanel,
     postContext,
     commentContext,
+    dmContext,
+    isDmPage,
+    dmPeerUsername,
+    findDmComposer,
+    injectDmAssist,
     extractQuestions,
     detectLang,
     fillComposerForTarget,
